@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
+  # Stays down until the API exposes a /metrics endpoint.
+  - job_name: taxi-rio-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - taxi-rio-api:3000
