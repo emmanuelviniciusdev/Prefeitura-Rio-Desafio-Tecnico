@@ -2,6 +2,7 @@ import { ACTOR_USER_IDS } from '../../auth/domain/actor';
 import type { Principal } from '../../auth/domain/principal';
 import {
   canCreateRide,
+  canFindFirstPendingRide,
   canReadRide,
   canUpdateRideStatus,
 } from './ride-access.policy';
@@ -33,5 +34,10 @@ describe('ride access policy', () => {
   it('lets only a motorista update ride status', () => {
     expect(canUpdateRideStatus('motorista')).toBe(true);
     expect(canUpdateRideStatus('passageiro')).toBe(false);
+  });
+
+  it('lets only a motorista read the first pending ride', () => {
+    expect(canFindFirstPendingRide('motorista')).toBe(true);
+    expect(canFindFirstPendingRide('passageiro')).toBe(false);
   });
 });

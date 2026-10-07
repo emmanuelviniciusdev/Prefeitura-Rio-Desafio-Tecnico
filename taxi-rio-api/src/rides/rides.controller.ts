@@ -30,8 +30,12 @@ import { CurrentPrincipal } from '../auth/current-principal.decorator';
 import type { Actor } from '../auth/domain/actor';
 import type { Principal } from '../auth/domain/principal';
 import { Roles } from '../auth/roles.decorator';
-import type { RideResponse } from './domain/ride-response';
+import type {
+  FirstPendingRideResponse,
+  RideResponse,
+} from './domain/ride-response';
 import { CreateRideDto } from './dto/create-ride.dto';
+import { FirstPendingRideResponseDto } from './dto/first-pending-ride-response.dto';
 import { RideResponseDto } from './dto/ride-response.dto';
 import { UpdateRideStatusDto } from './dto/update-ride-status.dto';
 import { RidesService } from './rides.service';
@@ -85,6 +89,23 @@ export class RidesController {
     );
     response.status(result.created ? HttpStatus.CREATED : HttpStatus.OK);
     return result.ride;
+  }
+
+  @Get('match-polling')
+  @Roles('motorista')
+  @ApiOperation({
+    summary: 'Retorna a primeira corrida pendente',
+    description:
+      'Somente o perfil `motorista` pode consultar. Devolve a corrida mais antiga com status `accepted`, em ordem crescente de `created_at`. Sempre responde 200: `corridaEncontrada` é a corrida encontrada ou `null` quando a fila estiver vazia.',
+  })
+  @ApiOkResponse({
+    type: FirstPendingRideResponseDto,
+    description: 'Primeira corrida pendente, ou `null` quando não houver.',
+  })
+  findFirstPending(
+    @CurrentActor() actor: Actor,
+  ): Promise<FirstPendingRideResponse> {
+    return this.ridesService.findFirstPending(actor);
   }
 
   @Patch(':id/status')

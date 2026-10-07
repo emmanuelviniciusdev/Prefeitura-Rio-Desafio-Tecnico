@@ -19,6 +19,7 @@ import {
 import { isDuplicateEntry } from './domain/duplicate-entry';
 import {
   canCreateRide,
+  canFindFirstPendingRide,
   canReadRide,
   canUpdateRideStatus,
 } from './domain/ride-access.policy';
@@ -26,6 +27,7 @@ import { Ride } from './domain/ride.entity';
 import {
   toRideResponse,
   type CreateRideResult,
+  type FirstPendingRideResponse,
   type RideResponse,
 } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
@@ -142,6 +144,23 @@ export class RidesService {
     }
 
     return result.response;
+  }
+
+  async findFirstPending(actor: Actor): Promise<FirstPendingRideResponse> {
+    if (!canFindFirstPendingRide(actor)) {
+      throw new ForbiddenException(
+        'Only a motorista can read the first pending ride',
+      );
+    }
+
+    const ride = await this.rides.findOne({
+      where: { status: RideStatus.Accepted },
+      order: { createdAt: 'ASC' },
+    });
+
+    return {
+      corridaEncontrada: ride ? toRideResponse(ride) : null,
+    };
   }
 
   async findById(id: string, principal: Principal): Promise<RideResponse> {

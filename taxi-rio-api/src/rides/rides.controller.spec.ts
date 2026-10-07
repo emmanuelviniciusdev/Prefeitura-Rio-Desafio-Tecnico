@@ -1,9 +1,13 @@
 import { HttpStatus } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Response } from 'express';
-import { ACTOR_USER_IDS } from '../auth/domain/actor';
+import { ACTOR_USER_IDS, type Actor } from '../auth/domain/actor';
 import type { Principal } from '../auth/domain/principal';
-import type { CreateRideResult, RideResponse } from './domain/ride-response';
+import type {
+  CreateRideResult,
+  FirstPendingRideResponse,
+  RideResponse,
+} from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
 import type { CreateRideDto } from './dto/create-ride.dto';
 import { RidesController } from './rides.controller';
@@ -38,6 +42,7 @@ describe('RidesController', () => {
       [CreateRideDto, string | undefined, Principal]
     >(),
     updateStatus: jest.fn(),
+    findFirstPending: jest.fn<Promise<FirstPendingRideResponse>, [Actor]>(),
     findById: jest.fn<Promise<RideResponse>, [string, Principal]>(),
   };
 
@@ -112,6 +117,17 @@ describe('RidesController', () => {
       { statusCorrida: RideStatus.Initialized },
       'motorista',
     );
+  });
+
+  it('returns the first pending ride for a motorista', async () => {
+    ridesService.findFirstPending.mockResolvedValue({
+      corridaEncontrada: response,
+    });
+
+    await expect(controller.findFirstPending('motorista')).resolves.toEqual({
+      corridaEncontrada: response,
+    });
+    expect(ridesService.findFirstPending).toHaveBeenCalledWith('motorista');
   });
 
   it('returns a ride by id for the current actor', async () => {

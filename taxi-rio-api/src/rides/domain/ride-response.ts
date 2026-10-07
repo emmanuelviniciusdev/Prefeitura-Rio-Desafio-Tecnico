@@ -20,6 +20,10 @@ export interface CreateRideResult {
   ride: RideResponse;
 }
 
+export interface FirstPendingRideResponse {
+  corridaEncontrada: RideResponse | null;
+}
+
 const rideStatuses = new Set<string>(Object.values(RideStatus));
 
 export function isRideResponse(value: unknown): value is RideResponse {
@@ -42,6 +46,20 @@ export function isRideResponse(value: unknown): value is RideResponse {
     typeof record.createdBy === 'string' &&
     typeof record.updatedAt === 'string' &&
     typeof record.updatedBy === 'string'
+  );
+}
+
+export function isFirstPendingRideResponse(
+  value: unknown,
+): value is FirstPendingRideResponse {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    record.corridaEncontrada === null ||
+    isRideResponse(record.corridaEncontrada)
   );
 }
 

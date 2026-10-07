@@ -18,6 +18,7 @@ import { ACTOR_USER_IDS, type Actor } from '../src/auth/domain/actor';
 import { configureApp } from '../src/configure-app';
 import { useExampleJwtEnv } from './jwt-env';
 import {
+  isFirstPendingRideResponse,
   isRideResponse,
   type RideResponse,
 } from '../src/rides/domain/ride-response';
@@ -195,6 +196,9 @@ describe('Rides (integration)', () => {
       .set('Idempotency-Key', randomUUID())
       .send(ridePayload())
       .expect(403);
+    await request(app.getHttpServer())
+      .get('/corridas/match-polling')
+      .expect(401);
   });
 
   it('returns 403 when the token profile cannot perform the ride operation', async () => {
@@ -220,6 +224,11 @@ describe('Rides (integration)', () => {
     await request(app.getHttpServer())
       .get(`/corridas/${created.id}`)
       .set('Authorization', authorization('motorista'))
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .get('/corridas/match-polling')
+      .set('Authorization', authorization('passageiro'))
       .expect(403);
 
     await request(app.getHttpServer())
@@ -509,6 +518,45 @@ describe('Rides (integration)', () => {
     expect(await redis.get(rideCacheKey(created.id))).toContain('Botafogo');
   });
 
+  it('returns the oldest accepted ride for a motorista and 200 when none is pending', async () => {
+    const empty = await request(app.getHttpServer())
+      .get('/corridas/match-polling')
+      .set('Authorization', authorization('motorista'))
+      .expect(200);
+    expect(readFirstPendingRide(empty.body)).toEqual({
+      corridaEncontrada: null,
+    });
+
+    const olderAccepted = await insertRide({
+      status: RideStatus.Accepted,
+      createdAt: '2026-10-07 10:00:00.000',
+      localPartida: 'Leblon',
+    });
+    await insertRide({
+      status: RideStatus.Accepted,
+      createdAt: '2026-10-07 12:00:00.000',
+      localPartida: 'Botafogo',
+    });
+    await insertRide({
+      status: RideStatus.Initialized,
+      createdAt: '2026-10-07 09:00:00.000',
+    });
+    await insertRide({
+      status: RideStatus.Finished,
+      createdAt: '2026-10-07 08:00:00.000',
+    });
+
+    const pending = await request(app.getHttpServer())
+      .get('/corridas/match-polling')
+      .set('Authorization', authorization('motorista'))
+      .expect(200);
+    const found = readFirstPendingRide(pending.body).corridaEncontrada;
+    expect(found).not.toBeNull();
+    expect(found?.id).toBe(olderAccepted);
+    expect(found?.localPartida).toBe('Leblon');
+    expect(found?.statusCorrida).toBe(RideStatus.Accepted);
+  });
+
   it('does not cache a missing ride', async () => {
     await request(app.getHttpServer())
       .get(`/corridas/${randomUUID()}`)
@@ -525,6 +573,7 @@ describe('Rides (integration)', () => {
       .expect(200);
     const paths = openApiPaths(response.body);
     expect(paths['/corridas']).toBeDefined();
+    expect(paths['/corridas/match-polling']).toBeDefined();
     expect(paths['/corridas/{id}']).toBeDefined();
     expect(paths['/corridas/{id}/status']).toBeDefined();
     expect(paths['/auth/generate-token/passageiro']).toBeDefined();
@@ -534,6 +583,7 @@ describe('Rides (integration)', () => {
     expect(document).toContain('Idempotency-Key');
     expect(document).not.toContain('X-Actor');
     expect(document).toContain('Cria uma corrida');
+    expect(document).toContain('Retorna a primeira corrida pendente');
     expect(document).toContain('Aceita, inicia ou finaliza uma corrida');
     expect(document).toContain(
       'Perfil do token sem permissão para esta operação.',
@@ -555,6 +605,13 @@ describe('Rides (integration)', () => {
       openApiProperty(response.body, 'RideResponseDto', 'idempotencyKey'),
     ).toMatchObject({ type: 'string', format: 'uuid' });
     expect(
+      openApiProperty(
+        response.body,
+        'FirstPendingRideResponseDto',
+        'corridaEncontrada',
+      ),
+    ).toMatchObject({ nullable: true });
+    expect(
       (openApiSchema(response.body, 'UpdateRideStatusDto').properties ?? {})
         .tempoDecorridoMinutos,
     ).toBeUndefined();
@@ -564,21 +621,25 @@ describe('Rides (integration)', () => {
     status: string;
     startedAt?: string | null;
     userId?: string;
+    createdAt?: string;
+    localPartida?: string;
   }): Promise<string> {
     const id = randomUUID();
     await dataSource.query(
       `INSERT INTO corridas (
         id, user_id, local_partida, local_destino, idempotency_key, dh_inicio, dh_fim,
         status_corrida, created_at, created_by, updated_at, updated_by
-      ) VALUES (?, ?, 'A', 'B', ?, ?, NULL, ?, UTC_TIMESTAMP(3), 'test', UTC_TIMESTAMP(3), 'test')`,
+      ) VALUES (?, ?, ?, 'B', ?, ?, NULL, ?, ?, 'test', UTC_TIMESTAMP(3), 'test')`,
       [
         id,
         values.userId ?? randomUUID(),
+        values.localPartida ?? 'A',
         randomUUID(),
         values.startedAt === undefined
           ? '2026-10-07 18:00:00.000'
           : values.startedAt,
         values.status,
+        values.createdAt ?? '2026-10-07 18:00:00.000',
       ],
     );
     return id;
@@ -670,6 +731,16 @@ function readAccessToken(value: unknown): string {
 function readRide(value: unknown): RideResponse {
   if (!isRideResponse(value)) {
     throw new Error('Response is not a ride');
+  }
+
+  return value;
+}
+
+function readFirstPendingRide(value: unknown): {
+  corridaEncontrada: RideResponse | null;
+} {
+  if (!isFirstPendingRideResponse(value)) {
+    throw new Error('Response is not a first pending ride');
   }
 
   return value;

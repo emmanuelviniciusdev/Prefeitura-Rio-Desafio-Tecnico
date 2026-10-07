@@ -39,6 +39,11 @@ describe('RidesService', () => {
     ),
     findOne: jest.fn<Promise<Ride | null>, [unknown]>(),
   };
+
+  const pendingRideQuery = {
+    where: { status: RideStatus.Accepted },
+    order: { createdAt: 'ASC' },
+  };
   const cache = {
     readThrough: jest.fn<
       Promise<RideResponse | null>,
@@ -331,6 +336,32 @@ describe('RidesService', () => {
     await expect(service.findById(rideId, passageiro)).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('returns the oldest accepted ride for a motorista', async () => {
+    const stored = rideEntity(RideStatus.Accepted);
+    ridesRepository.findOne.mockResolvedValue(stored);
+
+    await expect(service.findFirstPending('motorista')).resolves.toEqual({
+      corridaEncontrada: toRideResponse(stored),
+    });
+    expect(ridesRepository.findOne).toHaveBeenCalledWith(pendingRideQuery);
+  });
+
+  it('returns null when there is no pending ride', async () => {
+    ridesRepository.findOne.mockResolvedValue(null);
+
+    await expect(service.findFirstPending('motorista')).resolves.toEqual({
+      corridaEncontrada: null,
+    });
+    expect(ridesRepository.findOne).toHaveBeenCalledWith(pendingRideQuery);
+  });
+
+  it('forbids a passageiro from reading the first pending ride', async () => {
+    await expect(service.findFirstPending('passageiro')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(ridesRepository.findOne).not.toHaveBeenCalled();
   });
 });
 
