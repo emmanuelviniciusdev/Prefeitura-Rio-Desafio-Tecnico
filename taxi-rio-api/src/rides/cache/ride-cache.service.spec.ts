@@ -137,7 +137,7 @@ function rideResponse(): RideResponse {
     idempotencyKey: '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c',
     dhInicio: '2026-10-07T18:00:00.000Z',
     dhFim: null,
-    statusCorrida: RideStatus.Accepted,
+    statusCorrida: RideStatus.Requested,
     createdAt: '2026-10-07T18:00:00.000Z',
     createdBy: 'system',
     updatedAt: '2026-10-07T18:00:00.000Z',

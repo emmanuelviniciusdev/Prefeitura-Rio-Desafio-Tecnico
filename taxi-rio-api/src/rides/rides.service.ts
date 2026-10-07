@@ -31,7 +31,10 @@ import {
   type RideResponse,
 } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
-import { canTransition, isIdempotentAccept } from './domain/ride-status.policy';
+import {
+  canTransition,
+  isIdempotentRequest,
+} from './domain/ride-status.policy';
 import type { CreateRideDto } from './dto/create-ride.dto';
 import type { UpdateRideStatusDto } from './dto/update-ride-status.dto';
 
@@ -69,7 +72,7 @@ export class RidesService {
       idempotencyKey,
       startedAt: request.startedAt,
       finishedAt: null,
-      status: RideStatus.Accepted,
+      status: RideStatus.Requested,
       createdAt: now,
       createdBy: principal.actor,
       updatedAt: now,
@@ -119,7 +122,7 @@ export class RidesService {
         throw new NotFoundException(`Ride ${id} was not found`);
       }
 
-      if (isIdempotentAccept(ride.status, dto.statusCorrida)) {
+      if (isIdempotentRequest(ride.status, dto.statusCorrida)) {
         return { response: toRideResponse(ride), changed: false };
       }
 
@@ -154,7 +157,7 @@ export class RidesService {
     }
 
     const ride = await this.rides.findOne({
-      where: { status: RideStatus.Accepted },
+      where: { status: RideStatus.Requested },
       order: { createdAt: 'ASC' },
     });
 

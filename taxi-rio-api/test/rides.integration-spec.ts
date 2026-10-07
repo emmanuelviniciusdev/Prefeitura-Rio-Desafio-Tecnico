@@ -115,7 +115,7 @@ describe('Rides (integration)', () => {
 
     await expect(insertRide({ status: 'pending' })).rejects.toThrow();
     await expect(
-      insertRide({ status: RideStatus.Accepted, startedAt: null }),
+      insertRide({ status: RideStatus.Requested, startedAt: null }),
     ).rejects.toThrow();
 
     const uniqueIndex = await queryRows(
@@ -257,7 +257,7 @@ describe('Rides (integration)', () => {
       .expect(403);
 
     const foreignRideId = await insertRide({
-      status: RideStatus.Accepted,
+      status: RideStatus.Requested,
       userId: randomUUID(),
     });
     await request(app.getHttpServer())
@@ -284,7 +284,7 @@ describe('Rides (integration)', () => {
       idempotencyKey: key,
       dhInicio: payload.dhInicio,
       dhFim: null,
-      statusCorrida: RideStatus.Accepted,
+      statusCorrida: RideStatus.Requested,
       createdBy: 'passageiro',
       updatedBy: 'passageiro',
     });
@@ -302,7 +302,7 @@ describe('Rides (integration)', () => {
     const stored = await storedRide(ride.id);
     expect(stored).toMatchObject({
       origin: 'São Conrado',
-      status: RideStatus.Accepted,
+      status: RideStatus.Requested,
       createdBy: 'passageiro',
       updatedBy: 'passageiro',
       finishedAt: null,
@@ -371,7 +371,7 @@ describe('Rides (integration)', () => {
     expect(await countCorridas()).toBe(1);
   });
 
-  it('accepts, starts and finishes a ride', async () => {
+  it('confirms a requested ride, then starts and finishes it', async () => {
     const created = readRide(
       (
         await request(app.getHttpServer())
@@ -384,13 +384,13 @@ describe('Rides (integration)', () => {
     );
     expect(created.dhFim).toBeNull();
 
-    const accepted = await request(app.getHttpServer())
+    const requested = await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
       .set('Authorization', authorization('motorista'))
-      .send({ statusCorrida: RideStatus.Accepted })
+      .send({ statusCorrida: RideStatus.Requested })
       .expect(200);
-    expect(readRide(accepted.body)).toMatchObject({
-      statusCorrida: RideStatus.Accepted,
+    expect(readRide(requested.body)).toMatchObject({
+      statusCorrida: RideStatus.Requested,
       updatedBy: 'passageiro',
       dhFim: null,
     });
@@ -430,7 +430,7 @@ describe('Rides (integration)', () => {
       .expect(409);
   });
 
-  it('rejects skipping from accepted to finished and unknown rides', async () => {
+  it('rejects skipping from requested to finished and unknown rides', async () => {
     const created = readRide(
       (
         await request(app.getHttpServer())
@@ -518,7 +518,7 @@ describe('Rides (integration)', () => {
     expect(await redis.get(rideCacheKey(created.id))).toContain('Botafogo');
   });
 
-  it('returns the oldest accepted ride for a motorista and 200 when none is pending', async () => {
+  it('returns the oldest requested ride for a motorista and 200 when none is pending', async () => {
     const empty = await request(app.getHttpServer())
       .get('/corridas/match-polling')
       .set('Authorization', authorization('motorista'))
@@ -527,13 +527,13 @@ describe('Rides (integration)', () => {
       corridaEncontrada: null,
     });
 
-    const olderAccepted = await insertRide({
-      status: RideStatus.Accepted,
+    const olderRequested = await insertRide({
+      status: RideStatus.Requested,
       createdAt: '2026-10-07 10:00:00.000',
       localPartida: 'Leblon',
     });
     await insertRide({
-      status: RideStatus.Accepted,
+      status: RideStatus.Requested,
       createdAt: '2026-10-07 12:00:00.000',
       localPartida: 'Botafogo',
     });
@@ -552,9 +552,9 @@ describe('Rides (integration)', () => {
       .expect(200);
     const found = readFirstPendingRide(pending.body).corridaEncontrada;
     expect(found).not.toBeNull();
-    expect(found?.id).toBe(olderAccepted);
+    expect(found?.id).toBe(olderRequested);
     expect(found?.localPartida).toBe('Leblon');
-    expect(found?.statusCorrida).toBe(RideStatus.Accepted);
+    expect(found?.statusCorrida).toBe(RideStatus.Requested);
   });
 
   it('does not cache a missing ride', async () => {
@@ -584,7 +584,7 @@ describe('Rides (integration)', () => {
     expect(document).not.toContain('X-Actor');
     expect(document).toContain('Cria uma corrida');
     expect(document).toContain('Retorna a primeira corrida pendente');
-    expect(document).toContain('Aceita, inicia ou finaliza uma corrida');
+    expect(document).toContain('Confirma, inicia ou finaliza uma corrida');
     expect(document).toContain(
       'Perfil do token sem permissão para esta operação.',
     );

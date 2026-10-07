@@ -55,7 +55,7 @@ export class RidesController {
   @ApiOperation({
     summary: 'Cria uma corrida',
     description:
-      'Somente o perfil `passageiro` pode criar corridas, e o `userId` do corpo deve coincidir com o `user_id` do token. Cria uma corrida com status inicial `accepted`. A inserção usa a coluna `idempotency_key`: se a chave ainda não existir, a corrida é criada (201); se já existir, os dados armazenados são devolvidos (200).',
+      'Somente o perfil `passageiro` pode criar corridas, e o `userId` do corpo deve coincidir com o `user_id` do token. Cria uma corrida com status inicial `requested`. A inserção usa a coluna `idempotency_key`: se a chave ainda não existir, a corrida é criada (201); se já existir, os dados armazenados são devolvidos (200).',
   })
   @ApiHeader({
     name: 'Idempotency-Key',
@@ -96,7 +96,7 @@ export class RidesController {
   @ApiOperation({
     summary: 'Retorna a primeira corrida pendente',
     description:
-      'Somente o perfil `motorista` pode consultar. Devolve a corrida mais antiga com status `accepted`, em ordem crescente de `created_at`. Sempre responde 200: `corridaEncontrada` é a corrida encontrada ou `null` quando a fila estiver vazia.',
+      'Somente o perfil `motorista` pode consultar. Devolve a corrida mais antiga com status `requested`, em ordem crescente de `created_at`. Sempre responde 200: `corridaEncontrada` é a corrida encontrada ou `null` quando a fila estiver vazia.',
   })
   @ApiOkResponse({
     type: FirstPendingRideResponseDto,
@@ -111,9 +111,9 @@ export class RidesController {
   @Patch(':id/status')
   @Roles('motorista')
   @ApiOperation({
-    summary: 'Aceita, inicia ou finaliza uma corrida',
+    summary: 'Confirma, inicia ou finaliza uma corrida',
     description:
-      'Somente o perfil `motorista` pode alterar o status. `accepted` confirma o aceite enquanto a corrida está `accepted`, sem alterar o registro. `initialized` inicia a corrida, somente a partir de `accepted`. `finished` finaliza a corrida, somente a partir de `initialized`, e preenche `dh_fim` automaticamente.',
+      'Somente o perfil `motorista` pode alterar o status. `requested` confirma a solicitação enquanto a corrida está `requested`, sem alterar o registro. `initialized` inicia a corrida, somente a partir de `requested`. `finished` finaliza a corrida, somente a partir de `initialized`, e preenche `dh_fim` automaticamente.',
   })
   @ApiParam({
     name: 'id',

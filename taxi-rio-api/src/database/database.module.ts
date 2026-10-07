@@ -5,6 +5,7 @@ import type { MysqlConfig } from '../config/app.config';
 import { Ride } from '../rides/domain/ride.entity';
 import { CreateCorridas1791396000000 } from './migrations/1791396000000-CreateCorridas';
 import { MoveIdempotencyKeyOntoCorridas1791397000000 } from './migrations/1791397000000-MoveIdempotencyKeyOntoCorridas';
+import { RenameCorridaStatusAcceptedToRequested1791398000000 } from './migrations/1791398000000-RenameCorridaStatusAcceptedToRequested';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { MoveIdempotencyKeyOntoCorridas1791397000000 } from './migrations/179139
           migrations: [
             CreateCorridas1791396000000,
             MoveIdempotencyKeyOntoCorridas1791397000000,
+            RenameCorridaStatusAcceptedToRequested1791398000000,
           ],
           migrationsRun: true,
           migrationsTransactionMode: 'none',

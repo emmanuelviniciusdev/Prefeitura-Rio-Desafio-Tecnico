@@ -23,7 +23,7 @@ describe('RidesController', () => {
     idempotencyKey,
     dhInicio: '2026-10-07T18:00:00.000Z',
     dhFim: null,
-    statusCorrida: RideStatus.Accepted,
+    statusCorrida: RideStatus.Requested,
     createdAt: '2026-10-07T18:00:00.000Z',
     createdBy: 'passageiro',
     updatedAt: '2026-10-07T18:00:00.000Z',

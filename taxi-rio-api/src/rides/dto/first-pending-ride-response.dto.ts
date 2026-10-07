@@ -7,7 +7,7 @@ export class FirstPendingRideResponseDto implements FirstPendingRideResponse {
     type: RideResponseDto,
     nullable: true,
     description:
-      'Primeira corrida pendente (`accepted`) em ordem crescente de `created_at`. Nula quando não houver corrida pendente.',
+      'Primeira corrida pendente (`requested`) em ordem crescente de `created_at`. Nula quando não houver corrida pendente.',
   })
   corridaEncontrada: RideResponseDto | null;
 }

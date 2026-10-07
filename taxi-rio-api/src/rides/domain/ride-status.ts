@@ -1,5 +1,5 @@
 export enum RideStatus {
-  Accepted = 'accepted',
+  Requested = 'requested',
   Initialized = 'initialized',
   Finished = 'finished',
 }

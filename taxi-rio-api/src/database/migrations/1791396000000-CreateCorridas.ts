@@ -18,7 +18,7 @@ export class CreateCorridas1791396000000 implements MigrationInterface {
         \`updated_by\` varchar(255) NOT NULL,
         PRIMARY KEY (\`id\`),
         CONSTRAINT \`chk_corridas_status\` CHECK (
-          \`status_corrida\` IN ('accepted', 'initialized', 'finished')
+          \`status_corrida\` IN ('requested', 'initialized', 'finished')
         ),
         CONSTRAINT \`chk_corridas_elapsed\` CHECK (\`tempo_decorrido_minutos\` >= 0)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

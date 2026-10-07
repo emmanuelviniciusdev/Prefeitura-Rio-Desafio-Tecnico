@@ -6,7 +6,7 @@ export class UpdateRideStatusDto {
   @ApiProperty({
     enum: RideStatus,
     description:
-      'Novo status (coluna status_corrida). `accepted` confirma o aceite, `initialized` inicia e `finished` finaliza.',
+      'Novo status (coluna status_corrida). `requested` confirma a solicitação, `initialized` inicia e `finished` finaliza.',
     example: RideStatus.Initialized,
   })
   @IsEnum(RideStatus)

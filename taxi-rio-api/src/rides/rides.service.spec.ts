@@ -41,7 +41,7 @@ describe('RidesService', () => {
   };
 
   const pendingRideQuery = {
-    where: { status: RideStatus.Accepted },
+    where: { status: RideStatus.Requested },
     order: { createdAt: 'ASC' },
   };
   const cache = {
@@ -85,7 +85,7 @@ describe('RidesService', () => {
     cache.invalidate.mockResolvedValue(undefined);
   });
 
-  it('creates an accepted ride with the idempotency key and start time', async () => {
+  it('creates a requested ride with the idempotency key and start time', async () => {
     const result = await service.create(
       {
         ...dto,
@@ -104,7 +104,7 @@ describe('RidesService', () => {
       idempotencyKey,
       dhInicio,
       dhFim: null,
-      statusCorrida: RideStatus.Accepted,
+      statusCorrida: RideStatus.Requested,
       createdBy: 'passageiro',
       updatedBy: 'passageiro',
     });
@@ -113,7 +113,7 @@ describe('RidesService', () => {
   });
 
   it('returns the existing ride when the idempotency key already exists', async () => {
-    const stored = rideEntity(RideStatus.Accepted);
+    const stored = rideEntity(RideStatus.Requested);
     ridesRepository.insert.mockRejectedValueOnce(
       duplicateEntry(idempotencyKey),
     );
@@ -129,7 +129,7 @@ describe('RidesService', () => {
   });
 
   it('returns the existing ride even when the body differs', async () => {
-    const stored = rideEntity(RideStatus.Accepted);
+    const stored = rideEntity(RideStatus.Requested);
     ridesRepository.insert.mockRejectedValueOnce(
       duplicateEntry(idempotencyKey),
     );
@@ -146,7 +146,7 @@ describe('RidesService', () => {
   });
 
   it('returns the winner when a concurrent insert hits the unique key', async () => {
-    const stored = rideEntity(RideStatus.Accepted);
+    const stored = rideEntity(RideStatus.Requested);
     ridesRepository.insert.mockRejectedValueOnce(
       duplicateEntry(idempotencyKey),
     );
@@ -161,7 +161,7 @@ describe('RidesService', () => {
   });
 
   it('forbids replaying an idempotency key owned by another user_id', async () => {
-    const stored = rideEntity(RideStatus.Accepted, ACTOR_USER_IDS.motorista);
+    const stored = rideEntity(RideStatus.Requested, ACTOR_USER_IDS.motorista);
     ridesRepository.insert.mockRejectedValueOnce(
       duplicateEntry(idempotencyKey),
     );
@@ -199,23 +199,23 @@ describe('RidesService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('confirms accept without writing or invalidating the cache', async () => {
-    rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Accepted));
+  it('confirms requested status without writing or invalidating the cache', async () => {
+    rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Requested));
 
     const response = await service.updateStatus(
       rideId,
-      { statusCorrida: RideStatus.Accepted },
+      { statusCorrida: RideStatus.Requested },
       'motorista',
     );
 
-    expect(response.statusCorrida).toBe(RideStatus.Accepted);
+    expect(response.statusCorrida).toBe(RideStatus.Requested);
     expect(response.updatedBy).toBe('passageiro');
     expect(rideRows.save).not.toHaveBeenCalled();
     expect(cache.invalidate).not.toHaveBeenCalled();
   });
 
-  it('initializes an accepted ride and invalidates the cache', async () => {
-    rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Accepted));
+  it('initializes a requested ride and invalidates the cache', async () => {
+    rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Requested));
 
     const response = await service.updateStatus(
       rideId,
@@ -241,7 +241,7 @@ describe('RidesService', () => {
   });
 
   it('rejects finishing a ride that has not started', async () => {
-    rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Accepted));
+    rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Requested));
 
     await expect(
       service.updateStatus(
@@ -283,7 +283,7 @@ describe('RidesService', () => {
   });
 
   it('reads through the cache and falls back to the repository', async () => {
-    const entity = rideEntity(RideStatus.Accepted);
+    const entity = rideEntity(RideStatus.Requested);
     ridesRepository.findOne.mockResolvedValue(entity);
     cache.readThrough.mockImplementation(async (_id, loader) => loader());
 
@@ -310,7 +310,7 @@ describe('RidesService', () => {
 
   it('forbids a passageiro from reading a ride owned by another user_id', async () => {
     const cached = toRideResponse(
-      rideEntity(RideStatus.Accepted, ACTOR_USER_IDS.motorista),
+      rideEntity(RideStatus.Requested, ACTOR_USER_IDS.motorista),
     );
     cache.readThrough.mockResolvedValue(cached);
 
@@ -338,8 +338,8 @@ describe('RidesService', () => {
     );
   });
 
-  it('returns the oldest accepted ride for a motorista', async () => {
-    const stored = rideEntity(RideStatus.Accepted);
+  it('returns the oldest requested ride for a motorista', async () => {
+    const stored = rideEntity(RideStatus.Requested);
     ridesRepository.findOne.mockResolvedValue(stored);
 
     await expect(service.findFirstPending('motorista')).resolves.toEqual({
