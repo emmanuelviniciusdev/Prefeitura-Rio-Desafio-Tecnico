@@ -71,7 +71,6 @@ describe('Rides (integration)', () => {
   });
 
   beforeEach(async () => {
-    await dataSource.query('DELETE FROM idempotency_keys');
     await dataSource.query('DELETE FROM corridas');
     await redis.flushdb();
   });
@@ -94,7 +93,9 @@ describe('Rides (integration)', () => {
       'user_id',
       'local_partida',
       'local_destino',
-      'tempo_decorrido_minutos',
+      'idempotency_key',
+      'dh_inicio',
+      'dh_fim',
       'status_corrida',
       'created_at',
       'created_by',
@@ -102,22 +103,50 @@ describe('Rides (integration)', () => {
       'updated_by',
     ]);
 
+    const missingTables = await queryRows(
+      dataSource,
+      `SELECT TABLE_NAME AS tableName
+       FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'idempotency_keys'`,
+    );
+    expect(missingTables).toEqual([]);
+
+    await expect(insertRide({ status: 'pending' })).rejects.toThrow();
     await expect(
-      insertRide({ status: 'pending', elapsedMinutes: 0 }),
-    ).rejects.toThrow();
-    await expect(
-      insertRide({ status: RideStatus.Accepted, elapsedMinutes: -1 }),
+      insertRide({ status: RideStatus.Accepted, startedAt: null }),
     ).rejects.toThrow();
 
-    const elapsedColumn = await queryRows(
+    const uniqueIndex = await queryRows(
       dataSource,
-      `SELECT COLUMN_TYPE AS columnType
+      `SELECT NON_UNIQUE AS total
+       FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'corridas'
+         AND INDEX_NAME = 'uk_corridas_idempotency_key'
+         AND COLUMN_NAME = 'idempotency_key'`,
+    );
+    expect(readTotal(uniqueIndex[0])).toBe(0);
+
+    const startColumn = await queryRows(
+      dataSource,
+      `SELECT IS_NULLABLE AS isNullable
        FROM INFORMATION_SCHEMA.COLUMNS
        WHERE TABLE_SCHEMA = DATABASE()
          AND TABLE_NAME = 'corridas'
-         AND COLUMN_NAME = 'tempo_decorrido_minutos'`,
+         AND COLUMN_NAME = 'dh_inicio'`,
     );
-    expect(readFirstString(elapsedColumn[0]).toLowerCase()).toContain('float');
+    expect(readFirstString(startColumn[0]).toUpperCase()).toBe('NO');
+
+    const endColumn = await queryRows(
+      dataSource,
+      `SELECT IS_NULLABLE AS isNullable
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'corridas'
+         AND COLUMN_NAME = 'dh_fim'`,
+    );
+    expect(readFirstString(endColumn[0]).toUpperCase()).toBe('YES');
   });
 
   it('issues a token for each actor and rejects anonymous ride access', async () => {
@@ -157,7 +186,7 @@ describe('Rides (integration)', () => {
     const created = await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', `Bearer ${readAccessToken(motorista.body)}`)
-      .set('Idempotency-Key', 'auth-motorista')
+      .set('Idempotency-Key', randomUUID())
       .send(ridePayload())
       .expect(201);
     expect(readRide(created.body)).toMatchObject({
@@ -166,12 +195,13 @@ describe('Rides (integration)', () => {
     });
   });
 
-  it('creates a ride and replays the same Idempotency-Key', async () => {
+  it('creates a ride and returns the existing one for the same Idempotency-Key', async () => {
     const payload = ridePayload();
+    const key = randomUUID();
     const created = await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', authorization('passageiro'))
-      .set('Idempotency-Key', 'create-1')
+      .set('Idempotency-Key', key)
       .send(payload)
       .expect(201);
 
@@ -180,7 +210,9 @@ describe('Rides (integration)', () => {
       userId: payload.userId,
       localPartida: 'São Conrado',
       localDestino: 'Centro',
-      tempoDecorridoMinutos: 0,
+      idempotencyKey: key,
+      dhInicio: payload.dhInicio,
+      dhFim: null,
       statusCorrida: RideStatus.Accepted,
       createdBy: 'passageiro',
       updatedBy: 'passageiro',
@@ -189,13 +221,12 @@ describe('Rides (integration)', () => {
     const replayed = await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', authorization('motorista'))
-      .set('Idempotency-Key', 'create-1')
+      .set('Idempotency-Key', key)
       .send(payload)
-      .expect(201);
+      .expect(200);
 
     expect(replayed.body).toEqual(created.body);
-    expect(await countRows('corridas')).toBe(1);
-    expect(await countRows('idempotency_keys')).toBe(1);
+    expect(await countCorridas()).toBe(1);
 
     const stored = await storedRide(ride.id);
     expect(stored).toMatchObject({
@@ -203,26 +234,30 @@ describe('Rides (integration)', () => {
       status: RideStatus.Accepted,
       createdBy: 'passageiro',
       updatedBy: 'passageiro',
+      finishedAt: null,
     });
   });
 
-  it('rejects a reused Idempotency-Key when the body changes', async () => {
+  it('returns the original ride when the same Idempotency-Key is reused with another body', async () => {
     const payload = ridePayload();
-    await request(app.getHttpServer())
+    const key = randomUUID();
+    const created = await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', authorization())
-      .set('Idempotency-Key', 'create-2')
+      .set('Idempotency-Key', key)
       .send(payload)
       .expect(201);
 
-    await request(app.getHttpServer())
+    const replayed = await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', authorization())
-      .set('Idempotency-Key', 'create-2')
+      .set('Idempotency-Key', key)
       .send({ ...payload, localDestino: 'Leblon' })
-      .expect(409);
+      .expect(200);
 
-    expect(await countRows('corridas')).toBe(1);
+    expect(replayed.body).toEqual(created.body);
+    expect(readRide(replayed.body).localDestino).toBe('Centro');
+    expect(await countCorridas()).toBe(1);
   });
 
   it('requires Idempotency-Key and ignores unknown fields', async () => {
@@ -235,27 +270,34 @@ describe('Rides (integration)', () => {
     await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', authorization())
-      .set('Idempotency-Key', 'create-3')
+      .set('Idempotency-Key', 'not-a-uuid')
+      .send(payload)
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/corridas')
+      .set('Authorization', authorization())
+      .set('Idempotency-Key', randomUUID())
       .send({ ...payload, statusCorrida: RideStatus.Finished })
       .expect(400);
-    expect(await countRows('corridas')).toBe(0);
+    expect(await countCorridas()).toBe(0);
   });
 
   it('creates one ride when the same key is submitted concurrently', async () => {
     const payload = ridePayload();
+    const key = randomUUID();
     const send = () =>
       request(app.getHttpServer())
         .post('/corridas')
         .set('Authorization', authorization())
-        .set('Idempotency-Key', 'create-race')
+        .set('Idempotency-Key', key)
         .send(payload);
 
     const [first, second] = await Promise.all([send(), send()]);
+    const statuses = [first.status, second.status].sort();
 
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(201);
+    expect(statuses).toEqual([200, 201]);
     expect(second.body).toEqual(first.body);
-    expect(await countRows('corridas')).toBe(1);
+    expect(await countCorridas()).toBe(1);
   });
 
   it('accepts, starts and finishes a ride', async () => {
@@ -264,11 +306,12 @@ describe('Rides (integration)', () => {
         await request(app.getHttpServer())
           .post('/corridas')
           .set('Authorization', authorization('passageiro'))
-          .set('Idempotency-Key', 'status-1')
+          .set('Idempotency-Key', randomUUID())
           .send(ridePayload())
           .expect(201)
       ).body,
     );
+    expect(created.dhFim).toBeNull();
 
     const accepted = await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
@@ -278,6 +321,7 @@ describe('Rides (integration)', () => {
     expect(readRide(accepted.body)).toMatchObject({
       statusCorrida: RideStatus.Accepted,
       updatedBy: 'passageiro',
+      dhFim: null,
     });
 
     const started = await request(app.getHttpServer())
@@ -288,30 +332,25 @@ describe('Rides (integration)', () => {
     expect(readRide(started.body)).toMatchObject({
       statusCorrida: RideStatus.Initialized,
       updatedBy: 'motorista',
+      dhFim: null,
     });
 
-    await request(app.getHttpServer())
-      .patch(`/corridas/${created.id}/status`)
-      .set('Authorization', authorization())
-      .send({ statusCorrida: RideStatus.Finished })
-      .expect(400);
-
-    await request(app.getHttpServer())
+    const finishedResponse = await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
       .set('Authorization', authorization('passageiro'))
-      .send({
-        statusCorrida: RideStatus.Finished,
-        tempoDecorridoMinutos: 27.5,
-      })
+      .send({ statusCorrida: RideStatus.Finished })
       .expect(200);
+    const finishedRide = readRide(finishedResponse.body);
+    expect(finishedRide.statusCorrida).toBe(RideStatus.Finished);
+    expect(finishedRide.dhFim).toEqual(expect.any(String));
 
     const finished = await storedRide(created.id);
     expect(finished).toMatchObject({
       status: RideStatus.Finished,
-      elapsedMinutes: 27.5,
       createdBy: 'passageiro',
       updatedBy: 'passageiro',
     });
+    expect(finished.finishedAt).toEqual(expect.any(Date));
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
@@ -326,7 +365,7 @@ describe('Rides (integration)', () => {
         await request(app.getHttpServer())
           .post('/corridas')
           .set('Authorization', authorization())
-          .set('Idempotency-Key', 'status-2')
+          .set('Idempotency-Key', randomUUID())
           .send(ridePayload())
           .expect(201)
       ).body,
@@ -335,10 +374,7 @@ describe('Rides (integration)', () => {
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
       .set('Authorization', authorization())
-      .send({
-        statusCorrida: RideStatus.Finished,
-        tempoDecorridoMinutos: 5,
-      })
+      .send({ statusCorrida: RideStatus.Finished })
       .expect(409);
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
@@ -367,7 +403,7 @@ describe('Rides (integration)', () => {
     const createdResponse = await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', authorization())
-      .set('Idempotency-Key', 'cache-1')
+      .set('Idempotency-Key', randomUUID())
       .send(ridePayload({ localPartida: 'Copacabana' }))
       .expect(201);
     const created = readRide(createdResponse.body);
@@ -440,49 +476,55 @@ describe('Rides (integration)', () => {
     expect(document).toContain('Redis');
 
     expect(
-      openApiProperty(response.body, 'CreateRideDto', 'tempoDecorridoMinutos'),
-    ).toMatchObject({ type: 'number', format: 'float' });
+      openApiProperty(response.body, 'CreateRideDto', 'dhInicio'),
+    ).toMatchObject({ type: 'string', format: 'date-time' });
     expect(
-      openApiProperty(
-        response.body,
-        'UpdateRideStatusDto',
-        'tempoDecorridoMinutos',
-      ),
-    ).toMatchObject({ type: 'number', format: 'float' });
+      openApiProperty(response.body, 'RideResponseDto', 'dhInicio'),
+    ).toMatchObject({ type: 'string', format: 'date-time' });
     expect(
-      openApiProperty(
-        response.body,
-        'RideResponseDto',
-        'tempoDecorridoMinutos',
-      ),
-    ).toMatchObject({ type: 'number', format: 'float' });
+      openApiProperty(response.body, 'RideResponseDto', 'dhFim'),
+    ).toMatchObject({ format: 'date-time', nullable: true });
+    expect(
+      openApiProperty(response.body, 'RideResponseDto', 'idempotencyKey'),
+    ).toMatchObject({ type: 'string', format: 'uuid' });
+    expect(
+      (openApiSchema(response.body, 'UpdateRideStatusDto').properties ?? {})
+        .tempoDecorridoMinutos,
+    ).toBeUndefined();
   });
 
   async function insertRide(values: {
     status: string;
-    elapsedMinutes: number;
+    startedAt?: string | null;
   }): Promise<void> {
     await dataSource.query(
       `INSERT INTO corridas (
-        id, user_id, local_partida, local_destino, tempo_decorrido_minutos,
+        id, user_id, local_partida, local_destino, idempotency_key, dh_inicio, dh_fim,
         status_corrida, created_at, created_by, updated_at, updated_by
-      ) VALUES (?, ?, 'A', 'B', ?, ?, UTC_TIMESTAMP(3), 'test', UTC_TIMESTAMP(3), 'test')`,
-      [randomUUID(), randomUUID(), values.elapsedMinutes, values.status],
+      ) VALUES (?, ?, 'A', 'B', ?, ?, NULL, ?, UTC_TIMESTAMP(3), 'test', UTC_TIMESTAMP(3), 'test')`,
+      [
+        randomUUID(),
+        randomUUID(),
+        randomUUID(),
+        values.startedAt === undefined
+          ? '2026-10-07 18:00:00.000'
+          : values.startedAt,
+        values.status,
+      ],
     );
   }
 
   async function storedRide(id: string): Promise<{
     origin: string;
     status: string;
-    elapsedMinutes: number;
     createdBy: string;
     updatedBy: string;
+    finishedAt: Date | null;
   }> {
     const rows = await queryRows(
       dataSource,
       `SELECT local_partida AS origin, status_corrida AS status,
-              tempo_decorrido_minutos AS elapsedMinutes, created_by AS createdBy,
-              updated_by AS updatedBy
+              created_by AS createdBy, updated_by AS updatedBy, dh_fim AS finishedAt
        FROM corridas WHERE id = ?`,
       [id],
     );
@@ -501,14 +543,11 @@ describe('Rides (integration)', () => {
     return readAccessToken(response.body);
   }
 
-  async function countRows(
-    table: 'corridas' | 'idempotency_keys',
-  ): Promise<number> {
-    const sql =
-      table === 'corridas'
-        ? 'SELECT COUNT(*) AS total FROM corridas'
-        : 'SELECT COUNT(*) AS total FROM idempotency_keys';
-    const rows = await queryRows(dataSource, sql);
+  async function countCorridas(): Promise<number> {
+    const rows = await queryRows(
+      dataSource,
+      'SELECT COUNT(*) AS total FROM corridas',
+    );
     return readTotal(rows[0]);
   }
 });
@@ -516,15 +555,18 @@ describe('Rides (integration)', () => {
 function ridePayload(overrides?: {
   localPartida?: string;
   localDestino?: string;
+  dhInicio?: string;
 }): {
   userId: string;
   localPartida: string;
   localDestino: string;
+  dhInicio: string;
 } {
   return {
     userId: randomUUID(),
     localPartida: overrides?.localPartida ?? 'São Conrado',
     localDestino: overrides?.localDestino ?? 'Centro',
+    dhInicio: overrides?.dhInicio ?? '2026-10-07T18:00:00.000Z',
   };
 }
 
@@ -606,22 +648,20 @@ function readTotal(row: unknown): number {
 function parseStoredRide(row: unknown): {
   origin: string;
   status: string;
-  elapsedMinutes: number;
   createdBy: string;
   updatedBy: string;
+  finishedAt: Date | null;
 } {
   if (typeof row !== 'object' || row === null) {
     throw new Error('Expected a stored ride');
   }
 
   const record = row as Record<string, unknown>;
-  const elapsed = record.elapsedMinutes;
   if (
     typeof record.origin !== 'string' ||
     typeof record.status !== 'string' ||
     typeof record.createdBy !== 'string' ||
-    typeof record.updatedBy !== 'string' ||
-    (typeof elapsed !== 'number' && typeof elapsed !== 'string')
+    typeof record.updatedBy !== 'string'
   ) {
     throw new Error('Stored ride row is incomplete');
   }
@@ -629,17 +669,33 @@ function parseStoredRide(row: unknown): {
   return {
     origin: record.origin,
     status: record.status,
-    elapsedMinutes: Number(elapsed),
     createdBy: record.createdBy,
     updatedBy: record.updatedBy,
+    finishedAt: parseOptionalDate(record.finishedAt),
   };
 }
 
-function openApiProperty(
+function parseOptionalDate(value: unknown): Date | null {
+  if (value === null) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+
+  throw new Error('Unexpected finishedAt value');
+}
+
+function openApiSchema(
   document: unknown,
   schemaName: string,
-  propertyName: string,
-): Record<string, unknown> {
+): { properties?: Record<string, unknown> } {
   if (typeof document !== 'object' || document === null) {
     throw new Error('OpenAPI document is invalid');
   }
@@ -659,17 +715,25 @@ function openApiProperty(
     throw new Error(`Schema ${schemaName} was not found`);
   }
 
-  const properties = (schema as { properties?: unknown }).properties;
+  return schema;
+}
+
+function openApiProperty(
+  document: unknown,
+  schemaName: string,
+  propertyName: string,
+): Record<string, unknown> {
+  const properties = openApiSchema(document, schemaName).properties;
   if (typeof properties !== 'object' || properties === null) {
     throw new Error(`Schema ${schemaName} has no properties`);
   }
 
-  const property = (properties as Record<string, unknown>)[propertyName];
+  const property = properties[propertyName];
   if (typeof property !== 'object' || property === null) {
     throw new Error(`Property ${propertyName} was not found on ${schemaName}`);
   }
 
-  return property as Record<string, unknown>;
+  return property;
 }
 
 function openApiPaths(document: unknown): Record<string, unknown> {

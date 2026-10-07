@@ -22,13 +22,25 @@ export class RideResponseDto implements RideResponse {
   localDestino: string;
 
   @ApiProperty({
-    type: Number,
-    format: 'float',
-    description: 'Tempo decorrido em minutos (coluna tempo_decorrido_minutos).',
-    example: 18.5,
-    minimum: 0,
+    description: 'Chave de idempotência da criação (coluna idempotency_key).',
+    format: 'uuid',
   })
-  tempoDecorridoMinutos: number;
+  idempotencyKey: string;
+
+  @ApiProperty({
+    description: 'Data/hora de início em UTC (coluna dh_inicio).',
+    format: 'date-time',
+  })
+  dhInicio: string;
+
+  @ApiProperty({
+    description:
+      'Data/hora de término em UTC (coluna dh_fim). Nula até a corrida ser finalizada.',
+    format: 'date-time',
+    nullable: true,
+    type: String,
+  })
+  dhFim: string | null;
 
   @ApiProperty({
     enum: RideStatus,

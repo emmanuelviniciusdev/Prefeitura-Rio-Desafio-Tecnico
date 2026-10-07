@@ -7,11 +7,6 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import { DataSource, QueryFailedError, type EntityManager } from 'typeorm';
 import { RideCacheService } from './cache/ride-cache.service';
-import {
-  hashCreateRideRequest,
-  normalizeCreateRide,
-} from './domain/create-ride-request';
-import { IdempotencyKeyRecord } from './domain/idempotency-key.entity';
 import { Ride } from './domain/ride.entity';
 import { toRideResponse, type RideResponse } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
@@ -20,10 +15,13 @@ import { RidesService } from './rides.service';
 
 describe('RidesService', () => {
   const userId = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+  const idempotencyKey = '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c';
+  const dhInicio = '2026-10-07T18:00:00.000Z';
   const dto: CreateRideDto = {
     userId,
     localPartida: 'Copacabana',
     localDestino: 'Ipanema',
+    dhInicio,
   };
 
   const rideRows = {
@@ -31,14 +29,11 @@ describe('RidesService', () => {
     save: jest.fn((entity: Ride) => Promise.resolve(entity)),
     findOne: jest.fn<Promise<Ride | null>, [unknown]>(),
   };
-  const keyRows = {
-    create: jest.fn((entity: IdempotencyKeyRecord) => entity),
-    save: jest.fn((entity: IdempotencyKeyRecord) => Promise.resolve(entity)),
-  };
-  const idempotencyRepository = {
-    findOne: jest.fn<Promise<IdempotencyKeyRecord | null>, [unknown]>(),
-  };
   const ridesRepository = {
+    create: jest.fn((entity: Partial<Ride>) => entity as Ride),
+    insert: jest.fn((entity: Ride) =>
+      Promise.resolve({ identifiers: [{ id: entity.id }] }),
+    ),
     findOne: jest.fn<Promise<Ride | null>, [unknown]>(),
   };
   const cache = {
@@ -57,12 +52,9 @@ describe('RidesService', () => {
   };
 
   const manager = {
-    getRepository: (entity: unknown): typeof rideRows | typeof keyRows => {
+    getRepository: (entity: unknown): typeof rideRows => {
       if (entity === Ride) {
         return rideRows;
-      }
-      if (entity === IdempotencyKeyRecord) {
-        return keyRows;
       }
       throw new Error('Unexpected repository');
     },
@@ -76,107 +68,107 @@ describe('RidesService', () => {
       providers: [
         RidesService,
         { provide: getRepositoryToken(Ride), useValue: ridesRepository },
-        {
-          provide: getRepositoryToken(IdempotencyKeyRecord),
-          useValue: idempotencyRepository,
-        },
         { provide: DataSource, useValue: dataSource },
         { provide: RideCacheService, useValue: cache },
       ],
     }).compile();
 
     service = moduleRef.get(RidesService);
-    idempotencyRepository.findOne.mockResolvedValue(null);
     cache.invalidate.mockResolvedValue(undefined);
   });
 
-  it('creates an accepted ride and stores the idempotent response', async () => {
-    const response = await service.create(
+  it('creates an accepted ride with the idempotency key and start time', async () => {
+    const result = await service.create(
       {
         ...dto,
         localPartida: '  Copacabana  ',
         localDestino: ' Ipanema ',
       },
-      '  key-1  ',
+      `  ${idempotencyKey}  `,
       'passageiro',
     );
 
-    expect(response).toMatchObject({
+    expect(result.created).toBe(true);
+    expect(result.ride).toMatchObject({
       userId,
       localPartida: 'Copacabana',
       localDestino: 'Ipanema',
-      tempoDecorridoMinutos: 0,
+      idempotencyKey,
+      dhInicio,
+      dhFim: null,
       statusCorrida: RideStatus.Accepted,
       createdBy: 'passageiro',
       updatedBy: 'passageiro',
     });
-    expect(response.id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(result.ride.id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
 
-    const stored = keyRows.save.mock.calls[0]?.[0];
-    expect(stored).toMatchObject({
-      key: 'key-1',
-      resourceId: response.id,
-      requestHash: hashCreateRideRequest(
-        normalizeCreateRide({
-          userId,
-          localPartida: 'Copacabana',
-          localDestino: 'Ipanema',
-        }),
-      ),
-      responseBody: response,
+  it('returns the existing ride when the idempotency key already exists', async () => {
+    const stored = rideEntity(RideStatus.Accepted);
+    ridesRepository.insert.mockRejectedValueOnce(
+      duplicateEntry(idempotencyKey),
+    );
+    ridesRepository.findOne.mockResolvedValue(stored);
+
+    const result = await service.create(dto, idempotencyKey, 'motorista');
+
+    expect(result).toEqual({
+      created: false,
+      ride: toRideResponse(stored),
+    });
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns the existing ride even when the body differs', async () => {
+    const stored = rideEntity(RideStatus.Accepted);
+    ridesRepository.insert.mockRejectedValueOnce(
+      duplicateEntry(idempotencyKey),
+    );
+    ridesRepository.findOne.mockResolvedValue(stored);
+
+    const result = await service.create(
+      { ...dto, localDestino: 'Centro' },
+      idempotencyKey,
+      'passageiro',
+    );
+
+    expect(result.created).toBe(false);
+    expect(result.ride.localDestino).toBe('Ipanema');
+  });
+
+  it('returns the winner when a concurrent insert hits the unique key', async () => {
+    const stored = rideEntity(RideStatus.Accepted);
+    ridesRepository.insert.mockRejectedValueOnce(
+      duplicateEntry(idempotencyKey),
+    );
+    ridesRepository.findOne.mockResolvedValue(stored);
+
+    await expect(
+      service.create(dto, idempotencyKey, 'passageiro'),
+    ).resolves.toEqual({
+      created: false,
+      ride: toRideResponse(stored),
     });
   });
 
-  it('replays the original response for the same Idempotency-Key and body', async () => {
-    const stored = idempotencyRecord(dto);
-    idempotencyRepository.findOne.mockResolvedValue(stored);
-
-    await expect(service.create(dto, 'key-1', 'motorista')).resolves.toEqual(
-      stored.responseBody,
-    );
-    expect(dataSource.transaction).not.toHaveBeenCalled();
-  });
-
-  it('rejects the same Idempotency-Key when the body differs', async () => {
-    idempotencyRepository.findOne.mockResolvedValue(idempotencyRecord(dto));
-
-    await expect(
-      service.create({ ...dto, localDestino: 'Centro' }, 'key-1', 'passageiro'),
-    ).rejects.toBeInstanceOf(ConflictException);
-    expect(dataSource.transaction).not.toHaveBeenCalled();
-  });
-
-  it('replays the winner when a concurrent insert hits the unique key', async () => {
-    const stored = idempotencyRecord(dto);
-    idempotencyRepository.findOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(stored);
-    dataSource.transaction.mockRejectedValueOnce(
-      new QueryFailedError(
-        'INSERT',
-        [],
-        Object.assign(new Error("Duplicate entry 'key-1' for key 'PRIMARY'"), {
-          code: 'ER_DUP_ENTRY',
-          errno: 1062,
-        }),
-      ),
-    );
-
-    await expect(service.create(dto, 'key-1', 'passageiro')).resolves.toEqual(
-      stored.responseBody,
-    );
-  });
-
-  it('requires an Idempotency-Key before touching storage', async () => {
+  it('requires an Idempotency-Key UUID before touching storage', async () => {
     await expect(
       service.create(dto, '   ', 'passageiro'),
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(idempotencyRepository.findOne).not.toHaveBeenCalled();
+    await expect(
+      service.create(dto, 'not-a-uuid', 'passageiro'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(ridesRepository.insert).not.toHaveBeenCalled();
   });
 
   it('rejects a blank localPartida', async () => {
     await expect(
-      service.create({ ...dto, localPartida: '   ' }, 'key-1', 'passageiro'),
+      service.create(
+        { ...dto, localPartida: '   ' },
+        idempotencyKey,
+        'passageiro',
+      ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -206,6 +198,7 @@ describe('RidesService', () => {
 
     expect(response.statusCorrida).toBe(RideStatus.Initialized);
     expect(response.updatedBy).toBe('motorista');
+    expect(response.dhFim).toBeNull();
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
   });
 
@@ -215,55 +208,28 @@ describe('RidesService', () => {
     await expect(
       service.updateStatus(
         rideId,
-        {
-          statusCorrida: RideStatus.Finished,
-          tempoDecorridoMinutos: 10,
-        },
+        { statusCorrida: RideStatus.Finished },
         'passageiro',
       ),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(cache.invalidate).not.toHaveBeenCalled();
   });
 
-  it('finishes an initialized ride and stores the elapsed minutes', async () => {
+  it('finishes an initialized ride and fills dhFim', async () => {
     rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Initialized));
 
     const response = await service.updateStatus(
       rideId,
-      {
-        statusCorrida: RideStatus.Finished,
-        tempoDecorridoMinutos: 18,
-      },
+      { statusCorrida: RideStatus.Finished },
       'passageiro',
     );
 
     expect(response).toMatchObject({
       statusCorrida: RideStatus.Finished,
-      tempoDecorridoMinutos: 18,
       updatedBy: 'passageiro',
     });
+    expect(response.dhFim).toEqual(expect.any(String));
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
-  });
-
-  it('requires elapsed minutes only when finishing', async () => {
-    await expect(
-      service.updateStatus(
-        rideId,
-        { statusCorrida: RideStatus.Finished },
-        'passageiro',
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(
-      service.updateStatus(
-        rideId,
-        {
-          statusCorrida: RideStatus.Initialized,
-          tempoDecorridoMinutos: 4,
-        },
-        'passageiro',
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(dataSource.transaction).not.toHaveBeenCalled();
   });
 
   it('returns not found when the ride does not exist', async () => {
@@ -315,7 +281,12 @@ function rideEntity(status: RideStatus): Ride {
   ride.userId = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
   ride.origin = 'Copacabana';
   ride.destination = 'Ipanema';
-  ride.elapsedMinutes = status === RideStatus.Finished ? 18 : 0;
+  ride.idempotencyKey = '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c';
+  ride.startedAt = now;
+  ride.finishedAt =
+    status === RideStatus.Finished
+      ? new Date('2026-10-07T18:30:00.000Z')
+      : null;
   ride.status = status;
   ride.createdAt = now;
   ride.createdBy = 'system';
@@ -324,13 +295,13 @@ function rideEntity(status: RideStatus): Ride {
   return ride;
 }
 
-function idempotencyRecord(dto: CreateRideDto): IdempotencyKeyRecord {
-  const response = toRideResponse(rideEntity(RideStatus.Accepted));
-  const record = new IdempotencyKeyRecord();
-  record.key = 'key-1';
-  record.requestHash = hashCreateRideRequest(normalizeCreateRide(dto));
-  record.resourceId = response.id;
-  record.responseBody = response;
-  record.createdAt = new Date('2026-10-07T18:00:00.000Z');
-  return record;
+function duplicateEntry(key: string): QueryFailedError {
+  return new QueryFailedError(
+    'INSERT',
+    [],
+    Object.assign(new Error(`Duplicate entry '${key}' for key 'PRIMARY'`), {
+      code: 'ER_DUP_ENTRY',
+      errno: 1062,
+    }),
+  );
 }

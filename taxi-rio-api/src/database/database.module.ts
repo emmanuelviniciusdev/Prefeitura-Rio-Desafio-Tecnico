@@ -2,9 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { MysqlConfig } from '../config/app.config';
-import { IdempotencyKeyRecord } from '../rides/domain/idempotency-key.entity';
 import { Ride } from '../rides/domain/ride.entity';
 import { CreateCorridas1791396000000 } from './migrations/1791396000000-CreateCorridas';
+import { MoveIdempotencyKeyOntoCorridas1791397000000 } from './migrations/1791397000000-MoveIdempotencyKeyOntoCorridas';
 
 @Module({
   imports: [
@@ -22,8 +22,11 @@ import { CreateCorridas1791396000000 } from './migrations/1791396000000-CreateCo
           database: mysql.database,
           charset: 'utf8mb4',
           timezone: 'Z',
-          entities: [Ride, IdempotencyKeyRecord],
-          migrations: [CreateCorridas1791396000000],
+          entities: [Ride],
+          migrations: [
+            CreateCorridas1791396000000,
+            MoveIdempotencyKeyOntoCorridas1791397000000,
+          ],
           migrationsRun: true,
           migrationsTransactionMode: 'none',
           synchronize: false,

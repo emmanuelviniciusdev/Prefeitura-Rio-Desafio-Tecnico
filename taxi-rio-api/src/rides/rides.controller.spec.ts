@@ -1,18 +1,23 @@
+import { HttpStatus } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import type { Response } from 'express';
 import type { Actor } from '../auth/domain/actor';
-import type { RideResponse } from './domain/ride-response';
+import type { CreateRideResult, RideResponse } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
 import type { CreateRideDto } from './dto/create-ride.dto';
 import { RidesController } from './rides.controller';
 import { RidesService } from './rides.service';
 
 describe('RidesController', () => {
+  const idempotencyKey = '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c';
   const response: RideResponse = {
     id: '11111111-1111-4111-8111-111111111111',
     userId: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
     localPartida: 'Copacabana',
     localDestino: 'Ipanema',
-    tempoDecorridoMinutos: 0,
+    idempotencyKey,
+    dhInicio: '2026-10-07T18:00:00.000Z',
+    dhFim: null,
     statusCorrida: RideStatus.Accepted,
     createdAt: '2026-10-07T18:00:00.000Z',
     createdBy: 'passageiro',
@@ -23,11 +28,12 @@ describe('RidesController', () => {
     userId: response.userId,
     localPartida: 'Copacabana',
     localDestino: 'Ipanema',
+    dhInicio: response.dhInicio,
   };
 
   const ridesService = {
     create: jest.fn<
-      Promise<RideResponse>,
+      Promise<CreateRideResult>,
       [CreateRideDto, string | undefined, Actor]
     >(),
     updateStatus: jest.fn(),
@@ -47,26 +53,44 @@ describe('RidesController', () => {
   });
 
   it('creates a ride with the idempotency key and actor', async () => {
-    ridesService.create.mockResolvedValue(response);
+    ridesService.create.mockResolvedValue({ created: true, ride: response });
+    const { response: httpResponse, status } = statusResponse();
 
     await expect(
-      controller.create('key-1', 'passageiro', dto),
+      controller.create(idempotencyKey, 'passageiro', dto, httpResponse),
     ).resolves.toEqual(response);
     expect(ridesService.create).toHaveBeenCalledWith(
       dto,
-      'key-1',
+      idempotencyKey,
       'passageiro',
     );
+    expect(status).toHaveBeenCalledWith(HttpStatus.CREATED);
+  });
+
+  it('returns 200 when the idempotency key already exists', async () => {
+    ridesService.create.mockResolvedValue({ created: false, ride: response });
+    const { response: httpResponse, status } = statusResponse();
+
+    await expect(
+      controller.create(idempotencyKey, 'passageiro', dto, httpResponse),
+    ).resolves.toEqual(response);
+    expect(status).toHaveBeenCalledWith(HttpStatus.OK);
   });
 
   it('uses the first idempotency key when the header is repeated', async () => {
-    ridesService.create.mockResolvedValue(response);
+    ridesService.create.mockResolvedValue({ created: true, ride: response });
+    const { response: httpResponse } = statusResponse();
 
-    await controller.create(['key-1', 'key-2'], 'passageiro', dto);
+    await controller.create(
+      [idempotencyKey, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+      'passageiro',
+      dto,
+      httpResponse,
+    );
 
     expect(ridesService.create).toHaveBeenCalledWith(
       dto,
-      'key-1',
+      idempotencyKey,
       'passageiro',
     );
   });
@@ -95,3 +119,14 @@ describe('RidesController', () => {
     await expect(controller.findById(response.id)).resolves.toEqual(response);
   });
 });
+
+function statusResponse(): {
+  response: Response;
+  status: jest.Mock;
+} {
+  const status = jest.fn();
+  return {
+    response: { status } as unknown as Response,
+    status,
+  };
+}

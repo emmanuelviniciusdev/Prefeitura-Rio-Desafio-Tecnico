@@ -2,26 +2,23 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
 import type { Actor } from '../auth/domain/actor';
 import { RideCacheService } from './cache/ride-cache.service';
 import {
-  hashCreateRideRequest,
   normalizeCreateRide,
   type NormalizedCreateRide,
 } from './domain/create-ride-request';
 import { isDuplicateEntry } from './domain/duplicate-entry';
-import { IdempotencyKeyRecord } from './domain/idempotency-key.entity';
 import { Ride } from './domain/ride.entity';
 import {
-  isRideResponse,
   toRideResponse,
+  type CreateRideResult,
   type RideResponse,
 } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
@@ -29,7 +26,6 @@ import { canTransition, isIdempotentAccept } from './domain/ride-status.policy';
 import type { CreateRideDto } from './dto/create-ride.dto';
 import type { UpdateRideStatusDto } from './dto/update-ride-status.dto';
 
-const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 const TEXT_MAX_LENGTH = 255;
 
 @Injectable()
@@ -37,8 +33,6 @@ export class RidesService {
   constructor(
     @InjectRepository(Ride)
     private readonly rides: Repository<Ride>,
-    @InjectRepository(IdempotencyKeyRecord)
-    private readonly idempotencyKeys: Repository<IdempotencyKeyRecord>,
     private readonly dataSource: DataSource,
     private readonly cache: RideCacheService,
   ) {}
@@ -47,63 +41,43 @@ export class RidesService {
     dto: CreateRideDto,
     idempotencyKeyHeader: string | undefined,
     actor: Actor,
-  ): Promise<RideResponse> {
+  ): Promise<CreateRideResult> {
     const idempotencyKey = requireIdempotencyKey(idempotencyKeyHeader);
     const request = normalizeCreateRide(dto);
     assertCreateRide(request);
-    const requestHash = hashCreateRideRequest(request);
 
-    const existing = await this.idempotencyKeys.findOne({
-      where: { key: idempotencyKey },
+    const now = new Date();
+    const ride = this.rides.create({
+      id: randomUUID(),
+      userId: request.userId,
+      origin: request.localPartida,
+      destination: request.localDestino,
+      idempotencyKey,
+      startedAt: request.startedAt,
+      finishedAt: null,
+      status: RideStatus.Accepted,
+      createdAt: now,
+      createdBy: actor,
+      updatedAt: now,
+      updatedBy: actor,
     });
-    if (existing) {
-      return replay(existing, requestHash);
-    }
 
     try {
-      return await this.dataSource.transaction(async (manager) => {
-        const rides = manager.getRepository(Ride);
-        const keys = manager.getRepository(IdempotencyKeyRecord);
-        const now = new Date();
-        const ride = await rides.save(
-          rides.create({
-            id: randomUUID(),
-            userId: request.userId,
-            origin: request.localPartida,
-            destination: request.localDestino,
-            elapsedMinutes: request.tempoDecorridoMinutos,
-            status: RideStatus.Accepted,
-            createdAt: now,
-            createdBy: actor,
-            updatedAt: now,
-            updatedBy: actor,
-          }),
-        );
-        const response = toRideResponse(ride);
-        await keys.save(
-          keys.create({
-            key: idempotencyKey,
-            requestHash,
-            resourceId: ride.id,
-            responseBody: response,
-            createdAt: now,
-          }),
-        );
-        return response;
-      });
+      await this.rides.insert(ride);
+      return { created: true, ride: toRideResponse(ride) };
     } catch (error) {
       if (!isDuplicateEntry(error)) {
         throw error;
       }
 
-      const stored = await this.idempotencyKeys.findOne({
-        where: { key: idempotencyKey },
+      const existing = await this.rides.findOne({
+        where: { idempotencyKey },
       });
-      if (!stored) {
+      if (!existing) {
         throw error;
       }
 
-      return replay(stored, requestHash);
+      return { created: false, ride: toRideResponse(existing) };
     }
   }
 
@@ -112,8 +86,6 @@ export class RidesService {
     dto: UpdateRideStatusDto,
     actor: Actor,
   ): Promise<RideResponse> {
-    const elapsedMinutes = resolveElapsedMinutes(dto);
-
     const result = await this.dataSource.transaction(async (manager) => {
       const rides = manager.getRepository(Ride);
       const ride = await rides.findOne({
@@ -135,8 +107,8 @@ export class RidesService {
       }
 
       ride.status = dto.statusCorrida;
-      if (elapsedMinutes !== undefined) {
-        ride.elapsedMinutes = elapsedMinutes;
+      if (dto.statusCorrida === RideStatus.Finished) {
+        ride.finishedAt = new Date();
       }
       ride.updatedAt = new Date();
       ride.updatedBy = actor;
@@ -165,28 +137,13 @@ export class RidesService {
   }
 }
 
-function replay(
-  record: IdempotencyKeyRecord,
-  requestHash: string,
-): RideResponse {
-  if (!hashesMatch(record.requestHash, requestHash)) {
-    throw new ConflictException(
-      'Idempotency-Key was already used with a different request body',
-    );
-  }
-
-  return parseStoredResponse(record.responseBody);
-}
-
 function requireIdempotencyKey(value: string | undefined): string {
   const key = value?.trim() ?? '';
   if (!key) {
     throw new BadRequestException('Idempotency-Key header is required');
   }
-  if (key.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
-    throw new BadRequestException(
-      'Idempotency-Key must be at most 255 characters',
-    );
+  if (!isUUID(key)) {
+    throw new BadRequestException('Idempotency-Key must be a UUID');
   }
 
   return key;
@@ -207,64 +164,7 @@ function assertCreateRide(request: NormalizedCreateRide): void {
       'localPartida and localDestino must be at most 255 characters',
     );
   }
-
-  assertElapsedMinutes(request.tempoDecorridoMinutos);
-}
-
-function resolveElapsedMinutes(dto: UpdateRideStatusDto): number | undefined {
-  if (dto.statusCorrida === RideStatus.Finished) {
-    if (dto.tempoDecorridoMinutos === undefined) {
-      throw new BadRequestException(
-        'tempoDecorridoMinutos is required when finishing a ride',
-      );
-    }
-
-    assertElapsedMinutes(dto.tempoDecorridoMinutos);
-    return dto.tempoDecorridoMinutos;
-  }
-
-  if (dto.tempoDecorridoMinutos !== undefined) {
-    throw new BadRequestException(
-      'tempoDecorridoMinutos is only allowed when finishing a ride',
-    );
-  }
-
-  return undefined;
-}
-
-function assertElapsedMinutes(value: number): void {
-  if (!Number.isFinite(value) || value < 0) {
-    throw new BadRequestException(
-      'tempoDecorridoMinutos must be a non-negative number',
-    );
-  }
-}
-
-function hashesMatch(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function parseStoredResponse(value: unknown): RideResponse {
-  const parsed = typeof value === 'string' ? parseJson(value) : value;
-  if (!isRideResponse(parsed)) {
-    throw new InternalServerErrorException(
-      'Stored idempotent response is invalid',
-    );
-  }
-
-  return parsed;
-}
-
-function parseJson(value: string): unknown {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return undefined;
+  if (Number.isNaN(request.startedAt.getTime())) {
+    throw new BadRequestException('dhInicio must be a valid date-time');
   }
 }

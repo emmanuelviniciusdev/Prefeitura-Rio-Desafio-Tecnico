@@ -5,12 +5,19 @@ export interface RideResponse {
   userId: string;
   localPartida: string;
   localDestino: string;
-  tempoDecorridoMinutos: number;
+  idempotencyKey: string;
+  dhInicio: string;
+  dhFim: string | null;
   statusCorrida: RideStatus;
   createdAt: string;
   createdBy: string;
   updatedAt: string;
   updatedBy: string;
+}
+
+export interface CreateRideResult {
+  created: boolean;
+  ride: RideResponse;
 }
 
 const rideStatuses = new Set<string>(Object.values(RideStatus));
@@ -26,8 +33,9 @@ export function isRideResponse(value: unknown): value is RideResponse {
     typeof record.userId === 'string' &&
     typeof record.localPartida === 'string' &&
     typeof record.localDestino === 'string' &&
-    typeof record.tempoDecorridoMinutos === 'number' &&
-    Number.isFinite(record.tempoDecorridoMinutos) &&
+    typeof record.idempotencyKey === 'string' &&
+    typeof record.dhInicio === 'string' &&
+    isIsoDateOrNull(record.dhFim) &&
     typeof record.statusCorrida === 'string' &&
     rideStatuses.has(record.statusCorrida) &&
     typeof record.createdAt === 'string' &&
@@ -42,7 +50,9 @@ export function toRideResponse(ride: {
   userId: string;
   origin: string;
   destination: string;
-  elapsedMinutes: number;
+  idempotencyKey: string;
+  startedAt: Date | string;
+  finishedAt: Date | string | null;
   status: RideStatus;
   createdAt: Date | string;
   createdBy: string;
@@ -54,13 +64,27 @@ export function toRideResponse(ride: {
     userId: ride.userId,
     localPartida: ride.origin,
     localDestino: ride.destination,
-    tempoDecorridoMinutos: ride.elapsedMinutes,
+    idempotencyKey: ride.idempotencyKey,
+    dhInicio: toIso(ride.startedAt),
+    dhFim: toIsoOrNull(ride.finishedAt),
     statusCorrida: ride.status,
     createdAt: toIso(ride.createdAt),
     createdBy: ride.createdBy,
     updatedAt: toIso(ride.updatedAt),
     updatedBy: ride.updatedBy,
   };
+}
+
+function isIsoDateOrNull(value: unknown): value is string | null {
+  return value === null || typeof value === 'string';
+}
+
+function toIsoOrNull(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return toIso(value);
 }
 
 function toIso(value: Date | string): string {

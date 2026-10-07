@@ -15,8 +15,19 @@ export class Ride {
   @Column({ name: 'local_destino', type: 'varchar', length: 255 })
   destination: string;
 
-  @Column({ name: 'tempo_decorrido_minutos', type: 'float' })
-  elapsedMinutes: number;
+  @Column({
+    name: 'idempotency_key',
+    type: 'varchar',
+    length: 36,
+    unique: true,
+  })
+  idempotencyKey: string;
+
+  @Column({ name: 'dh_inicio', type: 'datetime', precision: 3 })
+  startedAt: Date;
+
+  @Column({ name: 'dh_fim', type: 'datetime', precision: 3, nullable: true })
+  finishedAt: Date | null;
 
   @Column({ name: 'status_corrida', type: 'varchar', length: 20 })
   status: RideStatus;

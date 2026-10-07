@@ -3,12 +3,12 @@ import {
   Controller,
   Get,
   Headers,
-  HttpCode,
   HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Res,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -23,6 +23,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { CurrentActor } from '../auth/current-actor.decorator';
 import type { Actor } from '../auth/domain/actor';
 import type { RideResponse } from './domain/ride-response';
@@ -39,47 +40,50 @@ export class RidesController {
   constructor(private readonly ridesService: RidesService) {}
 
   @Post()
-  @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Cria uma corrida',
     description:
-      'Cria uma corrida com status inicial `accepted`. O cabeçalho Idempotency-Key evita duplicidade: a mesma chave com o mesmo corpo devolve a resposta original; a mesma chave com outro corpo responde conflito. A comparação usa o corpo da requisição.',
+      'Cria uma corrida com status inicial `accepted`. A inserção usa a coluna `idempotency_key`: se a chave ainda não existir, a corrida é criada (201); se já existir, os dados armazenados são devolvidos (200).',
   })
   @ApiHeader({
     name: 'Idempotency-Key',
     required: true,
     description:
-      'Identificador único da criação. Reutilize o mesmo valor apenas para repetir a mesma requisição.',
+      'UUID único da criação. Reutilize o mesmo valor para obter a corrida já persistida.',
     example: '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c',
   })
   @ApiCreatedResponse({
     type: RideResponseDto,
-    description:
-      'Corrida criada ou resposta original reapresentada pela mesma Idempotency-Key.',
+    description: 'Corrida criada.',
+  })
+  @ApiOkResponse({
+    type: RideResponseDto,
+    description: 'Corrida já existente para a mesma Idempotency-Key.',
   })
   @ApiBadRequestResponse({
-    description: 'Cabeçalho Idempotency-Key ausente ou corpo inválido.',
+    description:
+      'Cabeçalho Idempotency-Key ausente/inválido ou corpo inválido.',
   })
-  @ApiConflictResponse({
-    description: 'Idempotency-Key já utilizada com outro corpo.',
-  })
-  create(
+  async create(
     @Headers('idempotency-key') idempotencyKey: string | string[] | undefined,
     @CurrentActor() actor: Actor,
     @Body() body: CreateRideDto,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<RideResponse> {
-    return this.ridesService.create(
+    const result = await this.ridesService.create(
       body,
       readSingleHeader(idempotencyKey),
       actor,
     );
+    response.status(result.created ? HttpStatus.CREATED : HttpStatus.OK);
+    return result.ride;
   }
 
   @Patch(':id/status')
   @ApiOperation({
     summary: 'Aceita, inicia ou finaliza uma corrida',
     description:
-      'Altera o status da corrida. `accepted` confirma o aceite enquanto a corrida está `accepted`, sem alterar o registro. `initialized` inicia a corrida, somente a partir de `accepted`. `finished` finaliza a corrida, somente a partir de `initialized`, e exige `tempoDecorridoMinutos`.',
+      'Altera o status da corrida. `accepted` confirma o aceite enquanto a corrida está `accepted`, sem alterar o registro. `initialized` inicia a corrida, somente a partir de `accepted`. `finished` finaliza a corrida, somente a partir de `initialized`, e preenche `dh_fim` automaticamente.',
   })
   @ApiParam({
     name: 'id',
@@ -91,7 +95,7 @@ export class RidesController {
     description: 'Corrida com o status atualizado.',
   })
   @ApiBadRequestResponse({
-    description: 'Status inválido ou tempo decorrido ausente na finalização.',
+    description: 'Status inválido.',
   })
   @ApiNotFoundResponse({ description: 'Corrida não encontrada.' })
   @ApiConflictResponse({ description: 'Transição de status não permitida.' })

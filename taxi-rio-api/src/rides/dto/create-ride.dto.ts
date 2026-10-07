@@ -1,13 +1,10 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { ApiProperty } from '@nestjs/swagger';
 import {
+  IsISO8601,
   IsNotEmpty,
-  IsNumber,
-  IsOptional,
   IsString,
   IsUUID,
   MaxLength,
-  Min,
 } from 'class-validator';
 
 export class CreateRideDto {
@@ -39,17 +36,11 @@ export class CreateRideDto {
   @MaxLength(255)
   localDestino: string;
 
-  @ApiPropertyOptional({
-    type: Number,
-    format: 'float',
-    description:
-      'Tempo decorrido em minutos (coluna tempo_decorrido_minutos). Padrão: 0.',
-    example: 0,
-    minimum: 0,
+  @ApiProperty({
+    description: 'Data/hora de início da corrida (coluna dh_inicio).',
+    format: 'date-time',
+    example: '2026-10-07T18:00:00.000Z',
   })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ allowNaN: false, allowInfinity: false, maxDecimalPlaces: 6 })
-  @Min(0)
-  tempoDecorridoMinutos?: number;
+  @IsISO8601()
+  dhInicio: string;
 }

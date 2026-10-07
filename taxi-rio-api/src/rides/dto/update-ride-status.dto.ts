@@ -1,6 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, Min } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsEnum } from 'class-validator';
 import { RideStatus } from '../domain/ride-status';
 
 export class UpdateRideStatusDto {
@@ -12,18 +11,4 @@ export class UpdateRideStatusDto {
   })
   @IsEnum(RideStatus)
   statusCorrida: RideStatus;
-
-  @ApiPropertyOptional({
-    type: Number,
-    format: 'float',
-    description:
-      'Tempo decorrido em minutos (coluna tempo_decorrido_minutos). Obrigatório quando statusCorrida é `finished`.',
-    example: 18.5,
-    minimum: 0,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ allowNaN: false, allowInfinity: false, maxDecimalPlaces: 6 })
-  @Min(0)
-  tempoDecorridoMinutos?: number;
 }
