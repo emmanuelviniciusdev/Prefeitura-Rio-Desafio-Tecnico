@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { requestAccessToken } from '../api/auth-api'
 import { sessionFromTokenResponse, writeSession } from '../api/session'
 import type { Actor, Session } from '../api/types'
+import { BrandLogo } from '../components/BrandLogo'
 import { TaxiStripe } from '../components/TaxiStripe'
 import { COPY } from '../copy'
 
@@ -33,10 +34,10 @@ export function LoginScreen({ onLoggedIn }: LoginScreenProps) {
       <TaxiStripe />
       <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-4 py-10">
         <div className="rounded-3xl border-2 border-taxi-black bg-white p-8 shadow-xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-taxi-navy">
-            {COPY.appName}
-          </p>
-          <h1 className="mt-2 text-3xl font-bold text-taxi-black">{COPY.loginTitle}</h1>
+          <div className="flex justify-center">
+            <BrandLogo size="lg" />
+          </div>
+          <h1 className="mt-4 text-3xl font-bold text-taxi-black">{COPY.loginTitle}</h1>
           <p className="mt-2 text-taxi-muted">{COPY.loginSubtitle}</p>
           <div className="mt-8 flex flex-col gap-3">
             <button

@@ -38,6 +38,10 @@ describe('App', () => {
 
     render(<App />)
 
+    expect(screen.getByRole('img', { name: COPY.appName })).toHaveAttribute(
+      'src',
+      '/taxi-rio.png',
+    )
     expect(screen.getByLabelText(COPY.origin)).toHaveValue(COPY.defaultOrigin)
     expect(screen.getByRole('button', { name: COPY.logout })).toBeInTheDocument()
   })

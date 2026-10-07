@@ -19,6 +19,10 @@ describe('LoginScreen', () => {
   it('renders passenger and driver login actions', () => {
     render(<LoginScreen onLoggedIn={vi.fn()} />)
 
+    expect(screen.getByRole('img', { name: COPY.appName })).toHaveAttribute(
+      'src',
+      '/taxi-rio.png',
+    )
     expect(
       screen.getByRole('button', { name: COPY.loginPassenger }),
     ).toBeInTheDocument()

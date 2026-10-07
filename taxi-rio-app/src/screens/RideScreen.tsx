@@ -1,5 +1,6 @@
 import { clearSession } from '../api/session'
 import type { Session } from '../api/types'
+import { BrandLogo } from '../components/BrandLogo'
 import { TaxiStripe } from '../components/TaxiStripe'
 import { COPY } from '../copy'
 import { useConfirm } from '../hooks/useConfirm'
@@ -35,8 +36,8 @@ export function RideScreen({ session, onLogout }: RideScreenProps) {
       <TaxiStripe />
       <header className="border-b-2 border-taxi-black bg-taxi-yellow">
         <div className="mx-auto flex w-full max-w-xl items-center justify-between gap-4 px-4 py-4">
-          <div className="text-left">
-            <p className="text-lg font-bold text-taxi-black">{COPY.appName}</p>
+          <div className="flex items-center gap-3 text-left">
+            <BrandLogo size="sm" />
             <p className="text-sm font-medium text-taxi-navy">{roleLabel}</p>
           </div>
           <button
