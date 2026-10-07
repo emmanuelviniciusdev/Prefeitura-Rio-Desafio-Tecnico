@@ -5,6 +5,10 @@ import {
   type StartedMySqlContainer,
 } from '@testcontainers/mysql';
 import {
+  RabbitMQContainer,
+  type StartedRabbitMQContainer,
+} from '@testcontainers/rabbitmq';
+import {
   RedisContainer,
   type StartedRedisContainer,
 } from '@testcontainers/redis';
@@ -28,6 +32,7 @@ import { rideCacheKey } from '../src/rides/cache/ride-cache.service';
 describe('Rides (integration)', () => {
   let mysql: StartedMySqlContainer;
   let redisContainer: StartedRedisContainer;
+  let rabbitmq: StartedRabbitMQContainer;
   let redis: Redis;
   let app: INestApplication<App>;
   let dataSource: DataSource;
@@ -43,6 +48,9 @@ describe('Rides (integration)', () => {
       .withUserPassword('admin')
       .start();
     redisContainer = await new RedisContainer('redis:7-alpine').start();
+    rabbitmq = await new RabbitMQContainer(
+      'rabbitmq:4-management-alpine',
+    ).start();
 
     process.env.MYSQL_HOST = mysql.getHost();
     process.env.MYSQL_PORT = String(mysql.getPort());
@@ -51,6 +59,7 @@ describe('Rides (integration)', () => {
     process.env.MYSQL_DATABASE = mysql.getDatabase();
     process.env.REDIS_HOST = redisContainer.getHost();
     process.env.REDIS_PORT = String(redisContainer.getPort());
+    process.env.RABBITMQ_URL = rabbitmq.getAmqpUrl();
     process.env.RIDE_CACHE_TTL_SECONDS = '300';
 
     redis = new Redis({
@@ -82,6 +91,7 @@ describe('Rides (integration)', () => {
       await redis.quit();
     }
     await redisContainer?.stop();
+    await rabbitmq?.stop();
     await mysql?.stop();
   });
 

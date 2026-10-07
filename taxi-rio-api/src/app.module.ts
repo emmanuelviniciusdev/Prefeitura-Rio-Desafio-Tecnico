@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { appConfig } from './config/app.config';
 import { DatabaseModule } from './database/database.module';
+import { RabbitmqModule } from './rabbitmq/rabbitmq.module';
 import { RedisModule } from './redis/redis.module';
 import { RidesModule } from './rides/rides.module';
 
@@ -14,14 +15,12 @@ import { RidesModule } from './rides/rides.module';
     ConfigModule.forRoot({
       isGlobal: true,
       load: [appConfig],
-      envFilePath: [
-        join(__dirname, '../.env'),
-        join(__dirname, '../.env.example'),
-      ],
+      envFilePath: join(__dirname, '../.env'),
     }),
     AuthModule,
     DatabaseModule,
     RedisModule,
+    RabbitmqModule,
     RidesModule,
   ],
   controllers: [AppController],

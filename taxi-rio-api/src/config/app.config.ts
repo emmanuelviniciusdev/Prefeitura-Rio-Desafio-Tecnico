@@ -13,6 +13,15 @@ export interface RedisConfig {
   port: number;
 }
 
+export interface MongodbConfig {
+  uri: string;
+  database: string;
+}
+
+export interface RabbitmqConfig {
+  url: string;
+}
+
 export interface JwtConfig {
   privateKey: string;
   expiresInSeconds: number;
@@ -21,6 +30,8 @@ export interface JwtConfig {
 export interface AppConfig {
   mysql: MysqlConfig;
   redis: RedisConfig;
+  mongodb: MongodbConfig;
+  rabbitmq: RabbitmqConfig;
   jwt: JwtConfig;
   rideCacheTtlSeconds: number;
 }
@@ -60,6 +71,15 @@ export const appConfig = registerAs('app', (): AppConfig => ({
   redis: {
     host: process.env.REDIS_HOST ?? 'localhost',
     port: readPort(process.env.REDIS_PORT, 6379),
+  },
+  mongodb: {
+    uri:
+      process.env.MONGODB_URI ??
+      'mongodb://admin:admin@localhost:27017/taxi_rio?authSource=admin',
+    database: process.env.MONGODB_DATABASE ?? 'taxi_rio',
+  },
+  rabbitmq: {
+    url: process.env.RABBITMQ_URL ?? 'amqp://admin:admin@localhost:5672',
   },
   jwt: {
     privateKey: normalizePrivateKeyPem(process.env.JWT_PRIVATE_KEY),

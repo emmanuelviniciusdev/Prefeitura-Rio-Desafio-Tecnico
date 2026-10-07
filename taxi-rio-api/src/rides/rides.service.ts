@@ -37,6 +37,8 @@ import {
 } from './domain/ride-status.policy';
 import type { CreateRideDto } from './dto/create-ride.dto';
 import type { UpdateRideStatusDto } from './dto/update-ride-status.dto';
+import { shouldPublishRideStatusChanged } from './events/ride-audit-event';
+import { RideEventPublisher } from './events/ride-event-publisher.service';
 
 const TEXT_MAX_LENGTH = 255;
 
@@ -47,6 +49,7 @@ export class RidesService {
     private readonly rides: Repository<Ride>,
     private readonly dataSource: DataSource,
     private readonly cache: RideCacheService,
+    private readonly events: RideEventPublisher,
   ) {}
 
   async create(
@@ -81,7 +84,9 @@ export class RidesService {
 
     try {
       await this.rides.insert(ride);
-      return { created: true, ride: toRideResponse(ride) };
+      const created = toRideResponse(ride);
+      await this.events.publishCreated(created);
+      return { created: true, ride: created };
     } catch (error) {
       if (!isDuplicateEntry(error)) {
         throw error;
@@ -144,6 +149,10 @@ export class RidesService {
 
     if (result.changed) {
       await this.cache.invalidate(id);
+    }
+
+    if (shouldPublishRideStatusChanged(dto.statusCorrida)) {
+      await this.events.publishStatusChanged(result.response);
     }
 
     return result.response;

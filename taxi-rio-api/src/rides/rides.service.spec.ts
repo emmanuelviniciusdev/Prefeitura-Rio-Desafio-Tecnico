@@ -14,6 +14,7 @@ import { Ride } from './domain/ride.entity';
 import { toRideResponse, type RideResponse } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
 import type { CreateRideDto } from './dto/create-ride.dto';
+import { RideEventPublisher } from './events/ride-event-publisher.service';
 import { RidesService } from './rides.service';
 
 describe('RidesService', () => {
@@ -51,6 +52,10 @@ describe('RidesService', () => {
     >(),
     invalidate: jest.fn<Promise<void>, [string]>(),
   };
+  const events = {
+    publishCreated: jest.fn<Promise<void>, [RideResponse]>(),
+    publishStatusChanged: jest.fn<Promise<void>, [RideResponse]>(),
+  };
   const dataSource = {
     transaction: jest.fn(
       async <T>(work: (manager: EntityManager) => Promise<T>): Promise<T> => {
@@ -78,11 +83,14 @@ describe('RidesService', () => {
         { provide: getRepositoryToken(Ride), useValue: ridesRepository },
         { provide: DataSource, useValue: dataSource },
         { provide: RideCacheService, useValue: cache },
+        { provide: RideEventPublisher, useValue: events },
       ],
     }).compile();
 
     service = moduleRef.get(RidesService);
     cache.invalidate.mockResolvedValue(undefined);
+    events.publishCreated.mockResolvedValue(undefined);
+    events.publishStatusChanged.mockResolvedValue(undefined);
   });
 
   it('creates a requested ride with the idempotency key and start time', async () => {
@@ -110,6 +118,8 @@ describe('RidesService', () => {
     });
     expect(result.ride.id).toMatch(/^[0-9a-f-]{36}$/i);
     expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(events.publishCreated).toHaveBeenCalledWith(result.ride);
+    expect(events.publishStatusChanged).not.toHaveBeenCalled();
   });
 
   it('returns the existing ride when the idempotency key already exists', async () => {
@@ -126,6 +136,7 @@ describe('RidesService', () => {
       ride: toRideResponse(stored),
     });
     expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(events.publishCreated).not.toHaveBeenCalled();
   });
 
   it('returns the existing ride even when the body differs', async () => {
@@ -177,6 +188,7 @@ describe('RidesService', () => {
       service.create(dto, idempotencyKey, motorista),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(ridesRepository.insert).not.toHaveBeenCalled();
+    expect(events.publishCreated).not.toHaveBeenCalled();
   });
 
   it('requires an Idempotency-Key UUID before touching storage', async () => {
@@ -212,6 +224,7 @@ describe('RidesService', () => {
     expect(response.updatedBy).toBe('passageiro');
     expect(rideRows.save).not.toHaveBeenCalled();
     expect(cache.invalidate).not.toHaveBeenCalled();
+    expect(events.publishStatusChanged).toHaveBeenCalledWith(response);
   });
 
   it('initializes a requested ride and invalidates the cache', async () => {
@@ -227,6 +240,7 @@ describe('RidesService', () => {
     expect(response.updatedBy).toBe('motorista');
     expect(response.dhFim).toBeNull();
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
+    expect(events.publishStatusChanged).not.toHaveBeenCalled();
   });
 
   it('forbids a passageiro from updating ride status', async () => {
@@ -268,6 +282,7 @@ describe('RidesService', () => {
     });
     expect(response.dhFim).toEqual(expect.any(String));
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
+    expect(events.publishStatusChanged).toHaveBeenCalledWith(response);
   });
 
   it('returns not found when the ride does not exist', async () => {
@@ -280,6 +295,7 @@ describe('RidesService', () => {
         'motorista',
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
+    expect(events.publishStatusChanged).not.toHaveBeenCalled();
   });
 
   it('reads through the cache and falls back to the repository', async () => {
