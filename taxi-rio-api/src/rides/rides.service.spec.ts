@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -111,7 +112,7 @@ describe('RidesService', () => {
     );
     ridesRepository.findOne.mockResolvedValue(stored);
 
-    const result = await service.create(dto, idempotencyKey, 'motorista');
+    const result = await service.create(dto, idempotencyKey, 'passageiro');
 
     expect(result).toEqual({
       created: false,
@@ -152,6 +153,13 @@ describe('RidesService', () => {
     });
   });
 
+  it('forbids a motorista from creating a ride', async () => {
+    await expect(
+      service.create(dto, idempotencyKey, 'motorista'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(ridesRepository.insert).not.toHaveBeenCalled();
+  });
+
   it('requires an Idempotency-Key UUID before touching storage', async () => {
     await expect(
       service.create(dto, '   ', 'passageiro'),
@@ -182,7 +190,7 @@ describe('RidesService', () => {
     );
 
     expect(response.statusCorrida).toBe(RideStatus.Accepted);
-    expect(response.updatedBy).toBe('system');
+    expect(response.updatedBy).toBe('passageiro');
     expect(rideRows.save).not.toHaveBeenCalled();
     expect(cache.invalidate).not.toHaveBeenCalled();
   });
@@ -202,6 +210,17 @@ describe('RidesService', () => {
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
   });
 
+  it('forbids a passageiro from updating ride status', async () => {
+    await expect(
+      service.updateStatus(
+        rideId,
+        { statusCorrida: RideStatus.Initialized },
+        'passageiro',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(rideRows.findOne).not.toHaveBeenCalled();
+  });
+
   it('rejects finishing a ride that has not started', async () => {
     rideRows.findOne.mockResolvedValue(rideEntity(RideStatus.Accepted));
 
@@ -209,7 +228,7 @@ describe('RidesService', () => {
       service.updateStatus(
         rideId,
         { statusCorrida: RideStatus.Finished },
-        'passageiro',
+        'motorista',
       ),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(cache.invalidate).not.toHaveBeenCalled();
@@ -221,12 +240,12 @@ describe('RidesService', () => {
     const response = await service.updateStatus(
       rideId,
       { statusCorrida: RideStatus.Finished },
-      'passageiro',
+      'motorista',
     );
 
     expect(response).toMatchObject({
       statusCorrida: RideStatus.Finished,
-      updatedBy: 'passageiro',
+      updatedBy: 'motorista',
     });
     expect(response.dhFim).toEqual(expect.any(String));
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
@@ -239,7 +258,7 @@ describe('RidesService', () => {
       service.updateStatus(
         rideId,
         { statusCorrida: RideStatus.Initialized },
-        'passageiro',
+        'motorista',
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
@@ -249,7 +268,7 @@ describe('RidesService', () => {
     ridesRepository.findOne.mockResolvedValue(entity);
     cache.readThrough.mockImplementation(async (_id, loader) => loader());
 
-    const response = await service.findById(rideId);
+    const response = await service.findById(rideId, 'passageiro');
 
     expect(response.id).toBe(rideId);
     expect(response.localPartida).toBe('Copacabana');
@@ -259,14 +278,32 @@ describe('RidesService', () => {
     const cached = toRideResponse(rideEntity(RideStatus.Initialized));
     cache.readThrough.mockResolvedValue(cached);
 
-    await expect(service.findById(rideId)).resolves.toEqual(cached);
+    await expect(service.findById(rideId, 'passageiro')).resolves.toEqual(
+      cached,
+    );
     expect(ridesRepository.findOne).not.toHaveBeenCalled();
+  });
+
+  it('forbids a motorista from reading a ride', async () => {
+    await expect(service.findById(rideId, 'motorista')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(cache.readThrough).not.toHaveBeenCalled();
+  });
+
+  it('forbids a passageiro from reading a ride created by another actor', async () => {
+    const cached = toRideResponse(rideEntity(RideStatus.Accepted, 'motorista'));
+    cache.readThrough.mockResolvedValue(cached);
+
+    await expect(service.findById(rideId, 'passageiro')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 
   it('returns not found when the read-through misses', async () => {
     cache.readThrough.mockResolvedValue(null);
 
-    await expect(service.findById(rideId)).rejects.toBeInstanceOf(
+    await expect(service.findById(rideId, 'passageiro')).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
@@ -274,7 +311,10 @@ describe('RidesService', () => {
 
 const rideId = '11111111-1111-4111-8111-111111111111';
 
-function rideEntity(status: RideStatus): Ride {
+function rideEntity(
+  status: RideStatus,
+  createdBy: string = 'passageiro',
+): Ride {
   const now = new Date('2026-10-07T18:00:00.000Z');
   const ride = new Ride();
   ride.id = rideId;
@@ -289,9 +329,9 @@ function rideEntity(status: RideStatus): Ride {
       : null;
   ride.status = status;
   ride.createdAt = now;
-  ride.createdBy = 'system';
+  ride.createdBy = createdBy;
   ride.updatedAt = now;
-  ride.updatedBy = 'system';
+  ride.updatedBy = createdBy;
   return ride;
 }
 

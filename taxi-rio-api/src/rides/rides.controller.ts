@@ -15,6 +15,7 @@ import {
   ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -26,6 +27,7 @@ import {
 import type { Response } from 'express';
 import { CurrentActor } from '../auth/current-actor.decorator';
 import type { Actor } from '../auth/domain/actor';
+import { Roles } from '../auth/roles.decorator';
 import type { RideResponse } from './domain/ride-response';
 import { CreateRideDto } from './dto/create-ride.dto';
 import { RideResponseDto } from './dto/ride-response.dto';
@@ -35,15 +37,19 @@ import { RidesService } from './rides.service';
 @ApiTags('corridas')
 @ApiBearerAuth()
 @ApiUnauthorizedResponse({ description: 'Token ausente ou inválido.' })
+@ApiForbiddenResponse({
+  description: 'Perfil do token sem permissão para esta operação.',
+})
 @Controller('corridas')
 export class RidesController {
   constructor(private readonly ridesService: RidesService) {}
 
   @Post()
+  @Roles('passageiro')
   @ApiOperation({
     summary: 'Cria uma corrida',
     description:
-      'Cria uma corrida com status inicial `accepted`. A inserção usa a coluna `idempotency_key`: se a chave ainda não existir, a corrida é criada (201); se já existir, os dados armazenados são devolvidos (200).',
+      'Somente o perfil `passageiro` pode criar corridas. Cria uma corrida com status inicial `accepted`. A inserção usa a coluna `idempotency_key`: se a chave ainda não existir, a corrida é criada (201); se já existir, os dados armazenados são devolvidos (200).',
   })
   @ApiHeader({
     name: 'Idempotency-Key',
@@ -80,10 +86,11 @@ export class RidesController {
   }
 
   @Patch(':id/status')
+  @Roles('motorista')
   @ApiOperation({
     summary: 'Aceita, inicia ou finaliza uma corrida',
     description:
-      'Altera o status da corrida. `accepted` confirma o aceite enquanto a corrida está `accepted`, sem alterar o registro. `initialized` inicia a corrida, somente a partir de `accepted`. `finished` finaliza a corrida, somente a partir de `initialized`, e preenche `dh_fim` automaticamente.',
+      'Somente o perfil `motorista` pode alterar o status. `accepted` confirma o aceite enquanto a corrida está `accepted`, sem alterar o registro. `initialized` inicia a corrida, somente a partir de `accepted`. `finished` finaliza a corrida, somente a partir de `initialized`, e preenche `dh_fim` automaticamente.',
   })
   @ApiParam({
     name: 'id',
@@ -108,10 +115,11 @@ export class RidesController {
   }
 
   @Get(':id')
+  @Roles('passageiro')
   @ApiOperation({
     summary: 'Retorna uma corrida',
     description:
-      'Retorna uma corrida pelo id. A leitura é read-through no Redis: em caso de cache miss, a corrida é carregada do MySQL e armazenada no cache. A atualização de status invalida a chave.',
+      'Somente o perfil `passageiro` pode consultar as próprias corridas. A leitura é read-through no Redis: em caso de cache miss, a corrida é carregada do MySQL e armazenada no cache. A atualização de status invalida a chave.',
   })
   @ApiParam({
     name: 'id',
@@ -121,8 +129,11 @@ export class RidesController {
   @ApiOkResponse({ type: RideResponseDto, description: 'Corrida encontrada.' })
   @ApiBadRequestResponse({ description: 'Identificador inválido.' })
   @ApiNotFoundResponse({ description: 'Corrida não encontrada.' })
-  findById(@Param('id', ParseUUIDPipe) id: string): Promise<RideResponse> {
-    return this.ridesService.findById(id);
+  findById(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentActor() actor: Actor,
+  ): Promise<RideResponse> {
+    return this.ridesService.findById(id, actor);
   }
 }
 

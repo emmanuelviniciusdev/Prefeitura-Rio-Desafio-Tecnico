@@ -37,7 +37,7 @@ describe('RidesController', () => {
       [CreateRideDto, string | undefined, Actor]
     >(),
     updateStatus: jest.fn(),
-    findById: jest.fn<Promise<RideResponse>, [string]>(),
+    findById: jest.fn<Promise<RideResponse>, [string, Actor]>(),
   };
 
   let controller: RidesController;
@@ -113,10 +113,16 @@ describe('RidesController', () => {
     );
   });
 
-  it('returns a ride by id', async () => {
+  it('returns a ride by id for the current actor', async () => {
     ridesService.findById.mockResolvedValue(response);
 
-    await expect(controller.findById(response.id)).resolves.toEqual(response);
+    await expect(
+      controller.findById(response.id, 'passageiro'),
+    ).resolves.toEqual(response);
+    expect(ridesService.findById).toHaveBeenCalledWith(
+      response.id,
+      'passageiro',
+    );
   });
 });
 

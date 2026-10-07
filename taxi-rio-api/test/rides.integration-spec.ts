@@ -183,16 +183,56 @@ describe('Rides (integration)', () => {
       .set('Authorization', 'Bearer not-a-token')
       .expect(401);
 
-    const created = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post('/corridas')
       .set('Authorization', `Bearer ${readAccessToken(motorista.body)}`)
       .set('Idempotency-Key', randomUUID())
       .send(ridePayload())
-      .expect(201);
-    expect(readRide(created.body)).toMatchObject({
-      createdBy: 'motorista',
-      updatedBy: 'motorista',
-    });
+      .expect(403);
+  });
+
+  it('returns 403 when the token profile cannot perform the ride operation', async () => {
+    const payload = ridePayload();
+    const created = readRide(
+      (
+        await request(app.getHttpServer())
+          .post('/corridas')
+          .set('Authorization', authorization('passageiro'))
+          .set('Idempotency-Key', randomUUID())
+          .send(payload)
+          .expect(201)
+      ).body,
+    );
+
+    await request(app.getHttpServer())
+      .post('/corridas')
+      .set('Authorization', authorization('motorista'))
+      .set('Idempotency-Key', randomUUID())
+      .send(payload)
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .get(`/corridas/${created.id}`)
+      .set('Authorization', authorization('motorista'))
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization('passageiro'))
+      .send({ statusCorrida: RideStatus.Initialized })
+      .expect(403);
+
+    const ownRide = await request(app.getHttpServer())
+      .get(`/corridas/${created.id}`)
+      .set('Authorization', authorization('passageiro'))
+      .expect(200);
+    expect(readRide(ownRide.body).id).toBe(created.id);
+
+    await request(app.getHttpServer())
+      .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization('motorista'))
+      .send({ statusCorrida: RideStatus.Initialized })
+      .expect(200);
   });
 
   it('creates a ride and returns the existing one for the same Idempotency-Key', async () => {
@@ -220,7 +260,7 @@ describe('Rides (integration)', () => {
 
     const replayed = await request(app.getHttpServer())
       .post('/corridas')
-      .set('Authorization', authorization('motorista'))
+      .set('Authorization', authorization('passageiro'))
       .set('Idempotency-Key', key)
       .send(payload)
       .expect(200);
@@ -337,7 +377,7 @@ describe('Rides (integration)', () => {
 
     const finishedResponse = await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
-      .set('Authorization', authorization('passageiro'))
+      .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Finished })
       .expect(200);
     const finishedRide = readRide(finishedResponse.body);
@@ -348,13 +388,13 @@ describe('Rides (integration)', () => {
     expect(finished).toMatchObject({
       status: RideStatus.Finished,
       createdBy: 'passageiro',
-      updatedBy: 'passageiro',
+      updatedBy: 'motorista',
     });
     expect(finished.finishedAt).toEqual(expect.any(Date));
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
-      .set('Authorization', authorization())
+      .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(409);
   });
@@ -373,12 +413,12 @@ describe('Rides (integration)', () => {
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
-      .set('Authorization', authorization())
+      .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Finished })
       .expect(409);
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
-      .set('Authorization', authorization())
+      .set('Authorization', authorization('motorista'))
       .send({
         statusCorrida: RideStatus.Initialized,
         tempoDecorridoMinutos: 5,
@@ -386,7 +426,7 @@ describe('Rides (integration)', () => {
       .expect(400);
     await request(app.getHttpServer())
       .patch(`/corridas/${randomUUID()}/status`)
-      .set('Authorization', authorization())
+      .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(404);
     await request(app.getHttpServer())
@@ -430,7 +470,7 @@ describe('Rides (integration)', () => {
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
-      .set('Authorization', authorization())
+      .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(200);
 
@@ -473,6 +513,9 @@ describe('Rides (integration)', () => {
     expect(document).not.toContain('X-Actor');
     expect(document).toContain('Cria uma corrida');
     expect(document).toContain('Aceita, inicia ou finaliza uma corrida');
+    expect(document).toContain(
+      'Perfil do token sem permissão para esta operação.',
+    );
     expect(document).toContain('Redis');
 
     expect(

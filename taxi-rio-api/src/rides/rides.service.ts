@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -15,6 +16,11 @@ import {
   type NormalizedCreateRide,
 } from './domain/create-ride-request';
 import { isDuplicateEntry } from './domain/duplicate-entry';
+import {
+  canCreateRide,
+  canReadRide,
+  canUpdateRideStatus,
+} from './domain/ride-access.policy';
 import { Ride } from './domain/ride.entity';
 import {
   toRideResponse,
@@ -42,6 +48,10 @@ export class RidesService {
     idempotencyKeyHeader: string | undefined,
     actor: Actor,
   ): Promise<CreateRideResult> {
+    if (!canCreateRide(actor)) {
+      throw new ForbiddenException('Only a passageiro can create a ride');
+    }
+
     const idempotencyKey = requireIdempotencyKey(idempotencyKeyHeader);
     const request = normalizeCreateRide(dto);
     assertCreateRide(request);
@@ -86,6 +96,10 @@ export class RidesService {
     dto: UpdateRideStatusDto,
     actor: Actor,
   ): Promise<RideResponse> {
+    if (!canUpdateRideStatus(actor)) {
+      throw new ForbiddenException('Only a motorista can update ride status');
+    }
+
     const result = await this.dataSource.transaction(async (manager) => {
       const rides = manager.getRepository(Ride);
       const ride = await rides.findOne({
@@ -123,7 +137,13 @@ export class RidesService {
     return result.response;
   }
 
-  async findById(id: string): Promise<RideResponse> {
+  async findById(id: string, actor: Actor): Promise<RideResponse> {
+    if (actor !== 'passageiro') {
+      throw new ForbiddenException(
+        'Only a passageiro can read their own rides',
+      );
+    }
+
     const ride = await this.cache.readThrough(id, async () => {
       const entity = await this.rides.findOne({ where: { id } });
       return entity ? toRideResponse(entity) : null;
@@ -131,6 +151,11 @@ export class RidesService {
 
     if (!ride) {
       throw new NotFoundException(`Ride ${id} was not found`);
+    }
+    if (!canReadRide(actor, ride.createdBy)) {
+      throw new ForbiddenException(
+        'Only a passageiro can read their own rides',
+      );
     }
 
     return ride;
