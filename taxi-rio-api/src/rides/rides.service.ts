@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
+import type { Actor } from '../auth/domain/actor';
 import { RideCacheService } from './cache/ride-cache.service';
 import {
   hashCreateRideRequest,
@@ -29,8 +30,6 @@ import type { CreateRideDto } from './dto/create-ride.dto';
 import type { UpdateRideStatusDto } from './dto/update-ride-status.dto';
 
 const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
-const ACTOR_MAX_LENGTH = 255;
-const DEFAULT_ACTOR = 'system';
 const TEXT_MAX_LENGTH = 255;
 
 @Injectable()
@@ -47,10 +46,9 @@ export class RidesService {
   async create(
     dto: CreateRideDto,
     idempotencyKeyHeader: string | undefined,
-    actorHeader: string | undefined,
+    actor: Actor,
   ): Promise<RideResponse> {
     const idempotencyKey = requireIdempotencyKey(idempotencyKeyHeader);
-    const actor = resolveActor(actorHeader);
     const request = normalizeCreateRide(dto);
     assertCreateRide(request);
     const requestHash = hashCreateRideRequest(request);
@@ -112,9 +110,8 @@ export class RidesService {
   async updateStatus(
     id: string,
     dto: UpdateRideStatusDto,
-    actorHeader: string | undefined,
+    actor: Actor,
   ): Promise<RideResponse> {
-    const actor = resolveActor(actorHeader);
     const elapsedMinutes = resolveElapsedMinutes(dto);
 
     const result = await this.dataSource.transaction(async (manager) => {
@@ -193,15 +190,6 @@ function requireIdempotencyKey(value: string | undefined): string {
   }
 
   return key;
-}
-
-function resolveActor(value: string | undefined): string {
-  const actor = value?.trim() || DEFAULT_ACTOR;
-  if (actor.length > ACTOR_MAX_LENGTH) {
-    throw new BadRequestException('X-Actor must be at most 255 characters');
-  }
-
-  return actor;
 }
 
 function assertCreateRide(request: NormalizedCreateRide): void {

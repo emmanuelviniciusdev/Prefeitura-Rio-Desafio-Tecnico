@@ -4,3 +4,5 @@ coverage
 .git
 *.md
 *.log
+.env
+.env.*

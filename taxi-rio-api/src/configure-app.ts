@@ -15,10 +15,14 @@ export function configureApp(app: INestApplication): void {
 
   const config = new DocumentBuilder()
     .setTitle('Taxi Rio API')
-    .setDescription(
-      'API de corridas. A criação é idempotente pelo cabeçalho Idempotency-Key. A consulta de uma corrida usa cache read-through no Redis.',
-    )
     .setVersion('1.0')
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+      description: 'JWT emitido pelos endpoints de auth.',
+    })
+    .addTag('auth', 'Emissão de JWT para passageiro e motorista.')
     .addTag('corridas', 'Criação, consulta e transição de status das corridas.')
     .build();
 

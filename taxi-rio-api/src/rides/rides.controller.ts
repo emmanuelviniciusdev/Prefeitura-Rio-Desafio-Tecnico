@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiHeader,
@@ -20,7 +21,10 @@ import {
   ApiOperation,
   ApiParam,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CurrentActor } from '../auth/current-actor.decorator';
+import type { Actor } from '../auth/domain/actor';
 import type { RideResponse } from './domain/ride-response';
 import { CreateRideDto } from './dto/create-ride.dto';
 import { RideResponseDto } from './dto/ride-response.dto';
@@ -28,6 +32,8 @@ import { UpdateRideStatusDto } from './dto/update-ride-status.dto';
 import { RidesService } from './rides.service';
 
 @ApiTags('corridas')
+@ApiBearerAuth()
+@ApiUnauthorizedResponse({ description: 'Token ausente ou inválido.' })
 @Controller('corridas')
 export class RidesController {
   constructor(private readonly ridesService: RidesService) {}
@@ -37,7 +43,7 @@ export class RidesController {
   @ApiOperation({
     summary: 'Cria uma corrida',
     description:
-      'Cria uma corrida com status inicial `accepted`. O cabeçalho Idempotency-Key evita duplicidade: a mesma chave com o mesmo corpo devolve a resposta original; a mesma chave com outro corpo responde conflito. A comparação ignora o cabeçalho X-Actor.',
+      'Cria uma corrida com status inicial `accepted`. O cabeçalho Idempotency-Key evita duplicidade: a mesma chave com o mesmo corpo devolve a resposta original; a mesma chave com outro corpo responde conflito. A comparação usa o corpo da requisição.',
   })
   @ApiHeader({
     name: 'Idempotency-Key',
@@ -45,12 +51,6 @@ export class RidesController {
     description:
       'Identificador único da criação. Reutilize o mesmo valor apenas para repetir a mesma requisição.',
     example: '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c',
-  })
-  @ApiHeader({
-    name: 'X-Actor',
-    required: false,
-    description:
-      'Autor da operação (colunas created_by e updated_by). Quando omitido, grava `system`.',
   })
   @ApiCreatedResponse({
     type: RideResponseDto,
@@ -65,13 +65,13 @@ export class RidesController {
   })
   create(
     @Headers('idempotency-key') idempotencyKey: string | string[] | undefined,
-    @Headers('x-actor') actor: string | string[] | undefined,
+    @CurrentActor() actor: Actor,
     @Body() body: CreateRideDto,
   ): Promise<RideResponse> {
     return this.ridesService.create(
       body,
       readSingleHeader(idempotencyKey),
-      readSingleHeader(actor),
+      actor,
     );
   }
 
@@ -86,12 +86,6 @@ export class RidesController {
     format: 'uuid',
     description: 'Identificador da corrida.',
   })
-  @ApiHeader({
-    name: 'X-Actor',
-    required: false,
-    description:
-      'Autor da atualização (coluna updated_by). Quando omitido, grava `system`.',
-  })
   @ApiOkResponse({
     type: RideResponseDto,
     description: 'Corrida com o status atualizado.',
@@ -103,10 +97,10 @@ export class RidesController {
   @ApiConflictResponse({ description: 'Transição de status não permitida.' })
   updateStatus(
     @Param('id', ParseUUIDPipe) id: string,
-    @Headers('x-actor') actor: string | string[] | undefined,
+    @CurrentActor() actor: Actor,
     @Body() body: UpdateRideStatusDto,
   ): Promise<RideResponse> {
-    return this.ridesService.updateStatus(id, body, readSingleHeader(actor));
+    return this.ridesService.updateStatus(id, body, actor);
   }
 
   @Get(':id')

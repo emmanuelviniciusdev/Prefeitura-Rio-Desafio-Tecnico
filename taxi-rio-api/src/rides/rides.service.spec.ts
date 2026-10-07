@@ -98,7 +98,7 @@ describe('RidesService', () => {
         localDestino: ' Ipanema ',
       },
       '  key-1  ',
-      '  ana  ',
+      'passageiro',
     );
 
     expect(response).toMatchObject({
@@ -107,8 +107,8 @@ describe('RidesService', () => {
       localDestino: 'Ipanema',
       tempoDecorridoMinutos: 0,
       statusCorrida: RideStatus.Accepted,
-      createdBy: 'ana',
-      updatedBy: 'ana',
+      createdBy: 'passageiro',
+      updatedBy: 'passageiro',
     });
     expect(response.id).toMatch(/^[0-9a-f-]{36}$/i);
 
@@ -127,18 +127,11 @@ describe('RidesService', () => {
     });
   });
 
-  it('uses system when X-Actor is omitted', async () => {
-    const response = await service.create(dto, 'key-1', undefined);
-
-    expect(response.createdBy).toBe('system');
-    expect(response.updatedBy).toBe('system');
-  });
-
   it('replays the original response for the same Idempotency-Key and body', async () => {
     const stored = idempotencyRecord(dto);
     idempotencyRepository.findOne.mockResolvedValue(stored);
 
-    await expect(service.create(dto, 'key-1', 'someone-else')).resolves.toEqual(
+    await expect(service.create(dto, 'key-1', 'motorista')).resolves.toEqual(
       stored.responseBody,
     );
     expect(dataSource.transaction).not.toHaveBeenCalled();
@@ -148,7 +141,7 @@ describe('RidesService', () => {
     idempotencyRepository.findOne.mockResolvedValue(idempotencyRecord(dto));
 
     await expect(
-      service.create({ ...dto, localDestino: 'Centro' }, 'key-1', undefined),
+      service.create({ ...dto, localDestino: 'Centro' }, 'key-1', 'passageiro'),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(dataSource.transaction).not.toHaveBeenCalled();
   });
@@ -169,21 +162,21 @@ describe('RidesService', () => {
       ),
     );
 
-    await expect(service.create(dto, 'key-1', 'ana')).resolves.toEqual(
+    await expect(service.create(dto, 'key-1', 'passageiro')).resolves.toEqual(
       stored.responseBody,
     );
   });
 
   it('requires an Idempotency-Key before touching storage', async () => {
-    await expect(service.create(dto, '   ', undefined)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.create(dto, '   ', 'passageiro'),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(idempotencyRepository.findOne).not.toHaveBeenCalled();
   });
 
   it('rejects a blank localPartida', async () => {
     await expect(
-      service.create({ ...dto, localPartida: '   ' }, 'key-1', undefined),
+      service.create({ ...dto, localPartida: '   ' }, 'key-1', 'passageiro'),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -193,7 +186,7 @@ describe('RidesService', () => {
     const response = await service.updateStatus(
       rideId,
       { statusCorrida: RideStatus.Accepted },
-      'ana',
+      'motorista',
     );
 
     expect(response.statusCorrida).toBe(RideStatus.Accepted);
@@ -208,11 +201,11 @@ describe('RidesService', () => {
     const response = await service.updateStatus(
       rideId,
       { statusCorrida: RideStatus.Initialized },
-      'bruno',
+      'motorista',
     );
 
     expect(response.statusCorrida).toBe(RideStatus.Initialized);
-    expect(response.updatedBy).toBe('bruno');
+    expect(response.updatedBy).toBe('motorista');
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
   });
 
@@ -226,7 +219,7 @@ describe('RidesService', () => {
           statusCorrida: RideStatus.Finished,
           tempoDecorridoMinutos: 10,
         },
-        'ana',
+        'passageiro',
       ),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(cache.invalidate).not.toHaveBeenCalled();
@@ -241,13 +234,13 @@ describe('RidesService', () => {
         statusCorrida: RideStatus.Finished,
         tempoDecorridoMinutos: 18,
       },
-      'ana',
+      'passageiro',
     );
 
     expect(response).toMatchObject({
       statusCorrida: RideStatus.Finished,
       tempoDecorridoMinutos: 18,
-      updatedBy: 'ana',
+      updatedBy: 'passageiro',
     });
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
   });
@@ -257,7 +250,7 @@ describe('RidesService', () => {
       service.updateStatus(
         rideId,
         { statusCorrida: RideStatus.Finished },
-        'ana',
+        'passageiro',
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
@@ -267,7 +260,7 @@ describe('RidesService', () => {
           statusCorrida: RideStatus.Initialized,
           tempoDecorridoMinutos: 4,
         },
-        'ana',
+        'passageiro',
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(dataSource.transaction).not.toHaveBeenCalled();
@@ -280,7 +273,7 @@ describe('RidesService', () => {
       service.updateStatus(
         rideId,
         { statusCorrida: RideStatus.Initialized },
-        'ana',
+        'passageiro',
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
   });

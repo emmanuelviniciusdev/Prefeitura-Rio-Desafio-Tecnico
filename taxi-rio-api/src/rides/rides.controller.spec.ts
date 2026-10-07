@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import type { Actor } from '../auth/domain/actor';
 import type { RideResponse } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
 import type { CreateRideDto } from './dto/create-ride.dto';
@@ -14,9 +15,9 @@ describe('RidesController', () => {
     tempoDecorridoMinutos: 0,
     statusCorrida: RideStatus.Accepted,
     createdAt: '2026-10-07T18:00:00.000Z',
-    createdBy: 'ana',
+    createdBy: 'passageiro',
     updatedAt: '2026-10-07T18:00:00.000Z',
-    updatedBy: 'ana',
+    updatedBy: 'passageiro',
   };
   const dto: CreateRideDto = {
     userId: response.userId,
@@ -27,7 +28,7 @@ describe('RidesController', () => {
   const ridesService = {
     create: jest.fn<
       Promise<RideResponse>,
-      [CreateRideDto, string | undefined, string | undefined]
+      [CreateRideDto, string | undefined, Actor]
     >(),
     updateStatus: jest.fn(),
     findById: jest.fn<Promise<RideResponse>, [string]>(),
@@ -48,18 +49,26 @@ describe('RidesController', () => {
   it('creates a ride with the idempotency key and actor', async () => {
     ridesService.create.mockResolvedValue(response);
 
-    await expect(controller.create('key-1', 'ana', dto)).resolves.toEqual(
-      response,
+    await expect(
+      controller.create('key-1', 'passageiro', dto),
+    ).resolves.toEqual(response);
+    expect(ridesService.create).toHaveBeenCalledWith(
+      dto,
+      'key-1',
+      'passageiro',
     );
-    expect(ridesService.create).toHaveBeenCalledWith(dto, 'key-1', 'ana');
   });
 
   it('uses the first idempotency key when the header is repeated', async () => {
     ridesService.create.mockResolvedValue(response);
 
-    await controller.create(['key-1', 'key-2'], undefined, dto);
+    await controller.create(['key-1', 'key-2'], 'passageiro', dto);
 
-    expect(ridesService.create).toHaveBeenCalledWith(dto, 'key-1', undefined);
+    expect(ridesService.create).toHaveBeenCalledWith(
+      dto,
+      'key-1',
+      'passageiro',
+    );
   });
 
   it('updates the ride status', async () => {
@@ -69,14 +78,14 @@ describe('RidesController', () => {
     });
 
     await expect(
-      controller.updateStatus(response.id, 'bruno', {
+      controller.updateStatus(response.id, 'motorista', {
         statusCorrida: RideStatus.Initialized,
       }),
     ).resolves.toMatchObject({ statusCorrida: RideStatus.Initialized });
     expect(ridesService.updateStatus).toHaveBeenCalledWith(
       response.id,
       { statusCorrida: RideStatus.Initialized },
-      'bruno',
+      'motorista',
     );
   });
 

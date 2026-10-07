@@ -14,7 +14,9 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
+import type { Actor } from '../src/auth/domain/actor';
 import { configureApp } from '../src/configure-app';
+import { useExampleJwtEnv } from './jwt-env';
 import {
   isRideResponse,
   type RideResponse,
@@ -28,8 +30,11 @@ describe('Rides (integration)', () => {
   let redis: Redis;
   let app: INestApplication<App>;
   let dataSource: DataSource;
+  let passageiroToken = '';
+  let motoristaToken = '';
 
   beforeAll(async () => {
+    useExampleJwtEnv();
     mysql = await new MySqlContainer('mysql:8.4')
       .withDatabase('taxi_rio')
       .withUsername('admin')
@@ -61,6 +66,8 @@ describe('Rides (integration)', () => {
     configureApp(app);
     await app.init();
     dataSource = app.get(DataSource);
+    passageiroToken = await issueToken('passageiro');
+    motoristaToken = await issueToken('motorista');
   });
 
   beforeEach(async () => {
@@ -113,12 +120,58 @@ describe('Rides (integration)', () => {
     expect(readFirstString(elapsedColumn[0]).toLowerCase()).toContain('float');
   });
 
+  it('issues a token for each actor and rejects anonymous ride access', async () => {
+    await request(app.getHttpServer())
+      .get('/')
+      .expect(200)
+      .expect('Hello World!');
+
+    const passageiro = await request(app.getHttpServer())
+      .post('/auth/generate-token/passageiro')
+      .expect(200);
+    const motorista = await request(app.getHttpServer())
+      .post('/auth/generate-token/motorista')
+      .expect(200);
+
+    expect(passageiro.body).toMatchObject({
+      tokenType: 'Bearer',
+      expiresIn: 3600,
+    });
+    expect(motorista.body).toMatchObject({
+      tokenType: 'Bearer',
+      expiresIn: 3600,
+    });
+    expect(readAccessToken(passageiro.body)).not.toEqual(
+      readAccessToken(motorista.body),
+    );
+
+    await request(app.getHttpServer())
+      .post('/corridas')
+      .send(ridePayload())
+      .expect(401);
+    await request(app.getHttpServer())
+      .get(`/corridas/${randomUUID()}`)
+      .set('Authorization', 'Bearer not-a-token')
+      .expect(401);
+
+    const created = await request(app.getHttpServer())
+      .post('/corridas')
+      .set('Authorization', `Bearer ${readAccessToken(motorista.body)}`)
+      .set('Idempotency-Key', 'auth-motorista')
+      .send(ridePayload())
+      .expect(201);
+    expect(readRide(created.body)).toMatchObject({
+      createdBy: 'motorista',
+      updatedBy: 'motorista',
+    });
+  });
+
   it('creates a ride and replays the same Idempotency-Key', async () => {
     const payload = ridePayload();
     const created = await request(app.getHttpServer())
       .post('/corridas')
+      .set('Authorization', authorization('passageiro'))
       .set('Idempotency-Key', 'create-1')
-      .set('X-Actor', 'ana')
       .send(payload)
       .expect(201);
 
@@ -129,14 +182,14 @@ describe('Rides (integration)', () => {
       localDestino: 'Centro',
       tempoDecorridoMinutos: 0,
       statusCorrida: RideStatus.Accepted,
-      createdBy: 'ana',
-      updatedBy: 'ana',
+      createdBy: 'passageiro',
+      updatedBy: 'passageiro',
     });
 
     const replayed = await request(app.getHttpServer())
       .post('/corridas')
+      .set('Authorization', authorization('motorista'))
       .set('Idempotency-Key', 'create-1')
-      .set('X-Actor', 'bruno')
       .send(payload)
       .expect(201);
 
@@ -148,8 +201,8 @@ describe('Rides (integration)', () => {
     expect(stored).toMatchObject({
       origin: 'São Conrado',
       status: RideStatus.Accepted,
-      createdBy: 'ana',
-      updatedBy: 'ana',
+      createdBy: 'passageiro',
+      updatedBy: 'passageiro',
     });
   });
 
@@ -157,12 +210,14 @@ describe('Rides (integration)', () => {
     const payload = ridePayload();
     await request(app.getHttpServer())
       .post('/corridas')
+      .set('Authorization', authorization())
       .set('Idempotency-Key', 'create-2')
       .send(payload)
       .expect(201);
 
     await request(app.getHttpServer())
       .post('/corridas')
+      .set('Authorization', authorization())
       .set('Idempotency-Key', 'create-2')
       .send({ ...payload, localDestino: 'Leblon' })
       .expect(409);
@@ -174,10 +229,12 @@ describe('Rides (integration)', () => {
     const payload = ridePayload();
     await request(app.getHttpServer())
       .post('/corridas')
+      .set('Authorization', authorization())
       .send(payload)
       .expect(400);
     await request(app.getHttpServer())
       .post('/corridas')
+      .set('Authorization', authorization())
       .set('Idempotency-Key', 'create-3')
       .send({ ...payload, statusCorrida: RideStatus.Finished })
       .expect(400);
@@ -189,6 +246,7 @@ describe('Rides (integration)', () => {
     const send = () =>
       request(app.getHttpServer())
         .post('/corridas')
+        .set('Authorization', authorization())
         .set('Idempotency-Key', 'create-race')
         .send(payload);
 
@@ -205,8 +263,8 @@ describe('Rides (integration)', () => {
       (
         await request(app.getHttpServer())
           .post('/corridas')
+          .set('Authorization', authorization('passageiro'))
           .set('Idempotency-Key', 'status-1')
-          .set('X-Actor', 'ana')
           .send(ridePayload())
           .expect(201)
       ).body,
@@ -214,45 +272,50 @@ describe('Rides (integration)', () => {
 
     const accepted = await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
-      .set('X-Actor', 'bruno')
+      .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Accepted })
       .expect(200);
     expect(readRide(accepted.body)).toMatchObject({
       statusCorrida: RideStatus.Accepted,
-      updatedBy: 'ana',
+      updatedBy: 'passageiro',
     });
 
     const started = await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
-      .set('X-Actor', 'bruno')
+      .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(200);
-    expect(readRide(started.body).statusCorrida).toBe(RideStatus.Initialized);
+    expect(readRide(started.body)).toMatchObject({
+      statusCorrida: RideStatus.Initialized,
+      updatedBy: 'motorista',
+    });
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization())
       .send({ statusCorrida: RideStatus.Finished })
       .expect(400);
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization('passageiro'))
       .send({
         statusCorrida: RideStatus.Finished,
         tempoDecorridoMinutos: 27.5,
       })
-      .set('X-Actor', 'carla')
       .expect(200);
 
     const finished = await storedRide(created.id);
     expect(finished).toMatchObject({
       status: RideStatus.Finished,
       elapsedMinutes: 27.5,
-      createdBy: 'ana',
-      updatedBy: 'carla',
+      createdBy: 'passageiro',
+      updatedBy: 'passageiro',
     });
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization())
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(409);
   });
@@ -262,6 +325,7 @@ describe('Rides (integration)', () => {
       (
         await request(app.getHttpServer())
           .post('/corridas')
+          .set('Authorization', authorization())
           .set('Idempotency-Key', 'status-2')
           .send(ridePayload())
           .expect(201)
@@ -270,6 +334,7 @@ describe('Rides (integration)', () => {
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization())
       .send({
         statusCorrida: RideStatus.Finished,
         tempoDecorridoMinutos: 5,
@@ -277,6 +342,7 @@ describe('Rides (integration)', () => {
       .expect(409);
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization())
       .send({
         statusCorrida: RideStatus.Initialized,
         tempoDecorridoMinutos: 5,
@@ -284,17 +350,23 @@ describe('Rides (integration)', () => {
       .expect(400);
     await request(app.getHttpServer())
       .patch(`/corridas/${randomUUID()}/status`)
+      .set('Authorization', authorization())
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(404);
-    await request(app.getHttpServer()).get('/corridas/not-a-uuid').expect(400);
+    await request(app.getHttpServer())
+      .get('/corridas/not-a-uuid')
+      .set('Authorization', authorization())
+      .expect(400);
     await request(app.getHttpServer())
       .get(`/corridas/${randomUUID()}`)
+      .set('Authorization', authorization())
       .expect(404);
   });
 
   it('serves GET from Redis until a status change invalidates the cache', async () => {
     const createdResponse = await request(app.getHttpServer())
       .post('/corridas')
+      .set('Authorization', authorization())
       .set('Idempotency-Key', 'cache-1')
       .send(ridePayload({ localPartida: 'Copacabana' }))
       .expect(201);
@@ -304,6 +376,7 @@ describe('Rides (integration)', () => {
 
     const firstGet = await request(app.getHttpServer())
       .get(`/corridas/${created.id}`)
+      .set('Authorization', authorization())
       .expect(200);
     expect(firstGet.body).toEqual(createdResponse.body);
     expect(await redis.get(rideCacheKey(created.id))).toContain('Copacabana');
@@ -315,11 +388,13 @@ describe('Rides (integration)', () => {
 
     const cachedGet = await request(app.getHttpServer())
       .get(`/corridas/${created.id}`)
+      .set('Authorization', authorization())
       .expect(200);
     expect(readRide(cachedGet.body).localPartida).toBe('Copacabana');
 
     await request(app.getHttpServer())
       .patch(`/corridas/${created.id}/status`)
+      .set('Authorization', authorization())
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(200);
 
@@ -327,6 +402,7 @@ describe('Rides (integration)', () => {
       (
         await request(app.getHttpServer())
           .get(`/corridas/${created.id}`)
+          .set('Authorization', authorization())
           .expect(200)
       ).body,
     );
@@ -338,6 +414,7 @@ describe('Rides (integration)', () => {
   it('does not cache a missing ride', async () => {
     await request(app.getHttpServer())
       .get(`/corridas/${randomUUID()}`)
+      .set('Authorization', authorization())
       .expect(404);
     expect(await redis.keys('taxi-rio:rides:*')).toEqual([]);
   });
@@ -352,9 +429,12 @@ describe('Rides (integration)', () => {
     expect(paths['/corridas']).toBeDefined();
     expect(paths['/corridas/{id}']).toBeDefined();
     expect(paths['/corridas/{id}/status']).toBeDefined();
+    expect(paths['/auth/generate-token/passageiro']).toBeDefined();
+    expect(paths['/auth/generate-token/motorista']).toBeDefined();
 
     const document = JSON.stringify(response.body);
     expect(document).toContain('Idempotency-Key');
+    expect(document).not.toContain('X-Actor');
     expect(document).toContain('Cria uma corrida');
     expect(document).toContain('Aceita, inicia ou finaliza uma corrida');
     expect(document).toContain('Redis');
@@ -370,7 +450,11 @@ describe('Rides (integration)', () => {
       ),
     ).toMatchObject({ type: 'number', format: 'float' });
     expect(
-      openApiProperty(response.body, 'RideResponseDto', 'tempoDecorridoMinutos'),
+      openApiProperty(
+        response.body,
+        'RideResponseDto',
+        'tempoDecorridoMinutos',
+      ),
     ).toMatchObject({ type: 'number', format: 'float' });
   });
 
@@ -405,6 +489,18 @@ describe('Rides (integration)', () => {
     return parseStoredRide(rows[0]);
   }
 
+  function authorization(actor: Actor = 'passageiro'): string {
+    const token = actor === 'passageiro' ? passageiroToken : motoristaToken;
+    return `Bearer ${token}`;
+  }
+
+  async function issueToken(actor: Actor): Promise<string> {
+    const response = await request(app.getHttpServer())
+      .post(`/auth/generate-token/${actor}`)
+      .expect(200);
+    return readAccessToken(response.body);
+  }
+
   async function countRows(
     table: 'corridas' | 'idempotency_keys',
   ): Promise<number> {
@@ -430,6 +526,20 @@ function ridePayload(overrides?: {
     localPartida: overrides?.localPartida ?? 'São Conrado',
     localDestino: overrides?.localDestino ?? 'Centro',
   };
+}
+
+function readAccessToken(value: unknown): string {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('accessToken' in value) ||
+    typeof value.accessToken !== 'string' ||
+    value.accessToken.length === 0
+  ) {
+    throw new Error('Token response is invalid');
+  }
+
+  return value.accessToken;
 }
 
 function readRide(value: unknown): RideResponse {
