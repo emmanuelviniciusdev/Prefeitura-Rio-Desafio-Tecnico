@@ -1,7 +1,8 @@
 import { HttpStatus } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Response } from 'express';
-import type { Actor } from '../auth/domain/actor';
+import { ACTOR_USER_IDS } from '../auth/domain/actor';
+import type { Principal } from '../auth/domain/principal';
 import type { CreateRideResult, RideResponse } from './domain/ride-response';
 import { RideStatus } from './domain/ride-status';
 import type { CreateRideDto } from './dto/create-ride.dto';
@@ -12,7 +13,7 @@ describe('RidesController', () => {
   const idempotencyKey = '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c';
   const response: RideResponse = {
     id: '11111111-1111-4111-8111-111111111111',
-    userId: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+    userId: ACTOR_USER_IDS.passageiro,
     localPartida: 'Copacabana',
     localDestino: 'Ipanema',
     idempotencyKey,
@@ -34,10 +35,10 @@ describe('RidesController', () => {
   const ridesService = {
     create: jest.fn<
       Promise<CreateRideResult>,
-      [CreateRideDto, string | undefined, Actor]
+      [CreateRideDto, string | undefined, Principal]
     >(),
     updateStatus: jest.fn(),
-    findById: jest.fn<Promise<RideResponse>, [string, Actor]>(),
+    findById: jest.fn<Promise<RideResponse>, [string, Principal]>(),
   };
 
   let controller: RidesController;
@@ -57,12 +58,12 @@ describe('RidesController', () => {
     const { response: httpResponse, status } = statusResponse();
 
     await expect(
-      controller.create(idempotencyKey, 'passageiro', dto, httpResponse),
+      controller.create(idempotencyKey, passageiro, dto, httpResponse),
     ).resolves.toEqual(response);
     expect(ridesService.create).toHaveBeenCalledWith(
       dto,
       idempotencyKey,
-      'passageiro',
+      passageiro,
     );
     expect(status).toHaveBeenCalledWith(HttpStatus.CREATED);
   });
@@ -72,7 +73,7 @@ describe('RidesController', () => {
     const { response: httpResponse, status } = statusResponse();
 
     await expect(
-      controller.create(idempotencyKey, 'passageiro', dto, httpResponse),
+      controller.create(idempotencyKey, passageiro, dto, httpResponse),
     ).resolves.toEqual(response);
     expect(status).toHaveBeenCalledWith(HttpStatus.OK);
   });
@@ -83,7 +84,7 @@ describe('RidesController', () => {
 
     await controller.create(
       [idempotencyKey, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
-      'passageiro',
+      passageiro,
       dto,
       httpResponse,
     );
@@ -91,7 +92,7 @@ describe('RidesController', () => {
     expect(ridesService.create).toHaveBeenCalledWith(
       dto,
       idempotencyKey,
-      'passageiro',
+      passageiro,
     );
   });
 
@@ -116,15 +117,17 @@ describe('RidesController', () => {
   it('returns a ride by id for the current actor', async () => {
     ridesService.findById.mockResolvedValue(response);
 
-    await expect(
-      controller.findById(response.id, 'passageiro'),
-    ).resolves.toEqual(response);
-    expect(ridesService.findById).toHaveBeenCalledWith(
-      response.id,
-      'passageiro',
+    await expect(controller.findById(response.id, passageiro)).resolves.toEqual(
+      response,
     );
+    expect(ridesService.findById).toHaveBeenCalledWith(response.id, passageiro);
   });
 });
+
+const passageiro: Principal = {
+  actor: 'passageiro',
+  userId: ACTOR_USER_IDS.passageiro,
+};
 
 function statusResponse(): {
   response: Response;

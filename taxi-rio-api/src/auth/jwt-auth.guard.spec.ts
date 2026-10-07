@@ -7,8 +7,9 @@ import { appConfig } from '../config/app.config';
 import { useExampleJwtEnv } from '../../test/jwt-env';
 import { AuthModule } from './auth.module';
 import { AuthService } from './auth.service';
-import { CurrentActor } from './current-actor.decorator';
-import type { Actor } from './domain/actor';
+import { CurrentPrincipal } from './current-principal.decorator';
+import { ACTOR_USER_IDS } from './domain/actor';
+import type { Principal } from './domain/principal';
 import { Public } from './public.decorator';
 
 @Controller('probe')
@@ -20,8 +21,8 @@ class ProbeController {
   }
 
   @Get()
-  actor(@CurrentActor() actor: Actor): { actor: Actor } {
-    return { actor };
+  actor(@CurrentPrincipal() principal: Principal): Principal {
+    return principal;
   }
 }
 
@@ -69,13 +70,19 @@ describe('JwtAuthGuard', () => {
       .get('/probe')
       .set('Authorization', `Bearer ${readToken(passageiro.body)}`)
       .expect(200)
-      .expect({ actor: 'passageiro' });
+      .expect({
+        actor: 'passageiro',
+        userId: ACTOR_USER_IDS.passageiro,
+      });
 
     await request(app.getHttpServer())
       .get('/probe')
       .set('Authorization', `Bearer ${readToken(motorista.body)}`)
       .expect(200)
-      .expect({ actor: 'motorista' });
+      .expect({
+        actor: 'motorista',
+        userId: ACTOR_USER_IDS.motorista,
+      });
 
     const service = app.get(AuthService);
     await request(app.getHttpServer())

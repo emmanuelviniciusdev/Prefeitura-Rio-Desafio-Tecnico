@@ -7,7 +7,7 @@ import {
 import { join } from 'node:path';
 import { normalizePrivateKeyPem } from '../../config/app.config';
 import { exampleJwtPrivateKey } from '../../../test/jwt-env';
-import type { Actor } from './actor';
+import { userIdForActor, type Actor } from './actor';
 import {
   InvalidAccessTokenError,
   signAccessToken,
@@ -30,7 +30,7 @@ describe('access tokens', () => {
 
       expect(
         verifyAccessToken({ token, keys: jwks.byKid, now: issuedAt }),
-      ).toBe(actor);
+      ).toEqual({ actor, userId: userIdForActor(actor) });
     }
   });
 
@@ -52,6 +52,7 @@ describe('access tokens', () => {
       privateKey,
       kid: 'missing',
       actor: 'passageiro',
+      userId: userIdForActor('passageiro'),
       expiresInSeconds,
       issuedAt,
     });
@@ -86,11 +87,32 @@ describe('access tokens', () => {
   it('rejects a subject that is not an actor', () => {
     const token = signRaw(privateKey, kid, {
       sub: 'system',
+      user_id: userIdForActor('passageiro'),
       iat: issuedAt,
       exp: issuedAt + expiresInSeconds,
     });
 
     expectInvalid(token, issuedAt, 'sub');
+  });
+
+  it('rejects a missing or invalid user_id', () => {
+    const token = signRaw(privateKey, kid, {
+      sub: 'passageiro',
+      iat: issuedAt,
+      exp: issuedAt + expiresInSeconds,
+    });
+
+    expectInvalid(token, issuedAt, 'user_id');
+    expectInvalid(
+      signRaw(privateKey, kid, {
+        sub: 'passageiro',
+        user_id: 'not-a-uuid',
+        iat: issuedAt,
+        exp: issuedAt + expiresInSeconds,
+      }),
+      issuedAt,
+      'user_id',
+    );
   });
 
   it('rejects a malformed token', () => {
@@ -102,6 +124,7 @@ describe('access tokens', () => {
       privateKey,
       kid,
       actor,
+      userId: userIdForActor(actor),
       expiresInSeconds,
       issuedAt,
     });
@@ -122,9 +145,10 @@ describe('access tokens', () => {
   }
 });
 
-function claims(actor: string): Record<string, unknown> {
+function claims(actor: Actor): Record<string, unknown> {
   return {
     sub: actor,
+    user_id: userIdForActor(actor),
     iat: 1_700_000_000,
     exp: 1_700_000_060,
   };

@@ -11,7 +11,7 @@ export class CreateRideDto {
   @ApiProperty({
     format: 'uuid',
     description: 'Identificador do usuário (coluna user_id).',
-    example: '3fa85f64-5717-4562-b3fc-2c963f66afa6',
+    example: 'e1c6c6d8-08d2-46ce-a670-4be04e1be1cb',
   })
   @IsUUID()
   userId: string;

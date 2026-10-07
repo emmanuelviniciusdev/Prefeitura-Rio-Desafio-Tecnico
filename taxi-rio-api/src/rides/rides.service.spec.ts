@@ -7,6 +7,8 @@ import {
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import { DataSource, QueryFailedError, type EntityManager } from 'typeorm';
+import { ACTOR_USER_IDS } from '../auth/domain/actor';
+import type { Principal } from '../auth/domain/principal';
 import { RideCacheService } from './cache/ride-cache.service';
 import { Ride } from './domain/ride.entity';
 import { toRideResponse, type RideResponse } from './domain/ride-response';
@@ -15,7 +17,7 @@ import type { CreateRideDto } from './dto/create-ride.dto';
 import { RidesService } from './rides.service';
 
 describe('RidesService', () => {
-  const userId = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+  const userId = ACTOR_USER_IDS.passageiro;
   const idempotencyKey = '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c';
   const dhInicio = '2026-10-07T18:00:00.000Z';
   const dto: CreateRideDto = {
@@ -86,7 +88,7 @@ describe('RidesService', () => {
         localDestino: ' Ipanema ',
       },
       `  ${idempotencyKey}  `,
-      'passageiro',
+      passageiro,
     );
 
     expect(result.created).toBe(true);
@@ -112,7 +114,7 @@ describe('RidesService', () => {
     );
     ridesRepository.findOne.mockResolvedValue(stored);
 
-    const result = await service.create(dto, idempotencyKey, 'passageiro');
+    const result = await service.create(dto, idempotencyKey, passageiro);
 
     expect(result).toEqual({
       created: false,
@@ -131,7 +133,7 @@ describe('RidesService', () => {
     const result = await service.create(
       { ...dto, localDestino: 'Centro' },
       idempotencyKey,
-      'passageiro',
+      passageiro,
     );
 
     expect(result.created).toBe(false);
@@ -146,26 +148,38 @@ describe('RidesService', () => {
     ridesRepository.findOne.mockResolvedValue(stored);
 
     await expect(
-      service.create(dto, idempotencyKey, 'passageiro'),
+      service.create(dto, idempotencyKey, passageiro),
     ).resolves.toEqual({
       created: false,
       ride: toRideResponse(stored),
     });
   });
 
+  it('forbids replaying an idempotency key owned by another user_id', async () => {
+    const stored = rideEntity(RideStatus.Accepted, ACTOR_USER_IDS.motorista);
+    ridesRepository.insert.mockRejectedValueOnce(
+      duplicateEntry(idempotencyKey),
+    );
+    ridesRepository.findOne.mockResolvedValue(stored);
+
+    await expect(
+      service.create(dto, idempotencyKey, passageiro),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('forbids a motorista from creating a ride', async () => {
     await expect(
-      service.create(dto, idempotencyKey, 'motorista'),
+      service.create(dto, idempotencyKey, motorista),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(ridesRepository.insert).not.toHaveBeenCalled();
   });
 
   it('requires an Idempotency-Key UUID before touching storage', async () => {
+    await expect(service.create(dto, '   ', passageiro)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
     await expect(
-      service.create(dto, '   ', 'passageiro'),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(
-      service.create(dto, 'not-a-uuid', 'passageiro'),
+      service.create(dto, 'not-a-uuid', passageiro),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(ridesRepository.insert).not.toHaveBeenCalled();
   });
@@ -175,7 +189,7 @@ describe('RidesService', () => {
       service.create(
         { ...dto, localPartida: '   ' },
         idempotencyKey,
-        'passageiro',
+        passageiro,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -268,7 +282,7 @@ describe('RidesService', () => {
     ridesRepository.findOne.mockResolvedValue(entity);
     cache.readThrough.mockImplementation(async (_id, loader) => loader());
 
-    const response = await service.findById(rideId, 'passageiro');
+    const response = await service.findById(rideId, passageiro);
 
     expect(response.id).toBe(rideId);
     expect(response.localPartida).toBe('Copacabana');
@@ -278,47 +292,66 @@ describe('RidesService', () => {
     const cached = toRideResponse(rideEntity(RideStatus.Initialized));
     cache.readThrough.mockResolvedValue(cached);
 
-    await expect(service.findById(rideId, 'passageiro')).resolves.toEqual(
-      cached,
-    );
+    await expect(service.findById(rideId, passageiro)).resolves.toEqual(cached);
     expect(ridesRepository.findOne).not.toHaveBeenCalled();
   });
 
   it('forbids a motorista from reading a ride', async () => {
-    await expect(service.findById(rideId, 'motorista')).rejects.toBeInstanceOf(
+    await expect(service.findById(rideId, motorista)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     expect(cache.readThrough).not.toHaveBeenCalled();
   });
 
-  it('forbids a passageiro from reading a ride created by another actor', async () => {
-    const cached = toRideResponse(rideEntity(RideStatus.Accepted, 'motorista'));
+  it('forbids a passageiro from reading a ride owned by another user_id', async () => {
+    const cached = toRideResponse(
+      rideEntity(RideStatus.Accepted, ACTOR_USER_IDS.motorista),
+    );
     cache.readThrough.mockResolvedValue(cached);
 
-    await expect(service.findById(rideId, 'passageiro')).rejects.toBeInstanceOf(
+    await expect(service.findById(rideId, passageiro)).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  it('forbids creating a ride for another user_id', async () => {
+    await expect(
+      service.create(
+        { ...dto, userId: ACTOR_USER_IDS.motorista },
+        idempotencyKey,
+        passageiro,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(ridesRepository.insert).not.toHaveBeenCalled();
   });
 
   it('returns not found when the read-through misses', async () => {
     cache.readThrough.mockResolvedValue(null);
 
-    await expect(service.findById(rideId, 'passageiro')).rejects.toBeInstanceOf(
+    await expect(service.findById(rideId, passageiro)).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
 });
 
 const rideId = '11111111-1111-4111-8111-111111111111';
+const passageiro: Principal = {
+  actor: 'passageiro',
+  userId: ACTOR_USER_IDS.passageiro,
+};
+const motorista: Principal = {
+  actor: 'motorista',
+  userId: ACTOR_USER_IDS.motorista,
+};
 
 function rideEntity(
   status: RideStatus,
-  createdBy: string = 'passageiro',
+  userId: string = ACTOR_USER_IDS.passageiro,
 ): Ride {
   const now = new Date('2026-10-07T18:00:00.000Z');
   const ride = new Ride();
   ride.id = rideId;
-  ride.userId = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+  ride.userId = userId;
   ride.origin = 'Copacabana';
   ride.destination = 'Ipanema';
   ride.idempotencyKey = '0b6f9c3e-8a1d-4f5e-9c2a-1d2e3f4a5b6c';
@@ -329,9 +362,9 @@ function rideEntity(
       : null;
   ride.status = status;
   ride.createdAt = now;
-  ride.createdBy = createdBy;
+  ride.createdBy = 'passageiro';
   ride.updatedAt = now;
-  ride.updatedBy = createdBy;
+  ride.updatedBy = 'passageiro';
   return ride;
 }
 

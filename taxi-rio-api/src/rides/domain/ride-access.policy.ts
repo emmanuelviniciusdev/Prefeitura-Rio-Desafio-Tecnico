@@ -1,13 +1,21 @@
 import type { Actor } from '../../auth/domain/actor';
+import type { Principal } from '../../auth/domain/principal';
 
-export function canCreateRide(actor: Actor): boolean {
-  return actor === 'passageiro';
+export function canCreateRide(
+  principal: Principal,
+  requestedUserId: string,
+): boolean {
+  return isPassageiroOwner(principal, requestedUserId);
 }
 
-export function canReadRide(actor: Actor, createdBy: string): boolean {
-  return actor === 'passageiro' && createdBy === actor;
+export function canReadRide(principal: Principal, rideUserId: string): boolean {
+  return isPassageiroOwner(principal, rideUserId);
 }
 
 export function canUpdateRideStatus(actor: Actor): boolean {
   return actor === 'motorista';
+}
+
+function isPassageiroOwner(principal: Principal, rideUserId: string): boolean {
+  return principal.actor === 'passageiro' && principal.userId === rideUserId;
 }

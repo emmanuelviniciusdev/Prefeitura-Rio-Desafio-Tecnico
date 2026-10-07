@@ -1,5 +1,6 @@
 import { createSign, createVerify, type KeyObject } from 'node:crypto';
 import { isActor, type Actor } from './actor';
+import type { Principal } from './principal';
 
 const JWT_ALGORITHM = 'RS256';
 const MAX_TOKEN_LENGTH = 8192;
@@ -15,6 +16,7 @@ export function signAccessToken(input: {
   privateKey: KeyObject;
   kid: string;
   actor: Actor;
+  userId: string;
   expiresInSeconds: number;
   issuedAt?: number;
 }): string {
@@ -27,6 +29,9 @@ export function signAccessToken(input: {
   if (!input.kid) {
     throw new Error('kid is required to sign an access token');
   }
+  if (!isUserId(input.userId)) {
+    throw new Error('userId must be a UUID');
+  }
 
   const iat = input.issuedAt ?? unixNow();
   return signRs256({
@@ -34,6 +39,7 @@ export function signAccessToken(input: {
     kid: input.kid,
     payload: {
       sub: input.actor,
+      user_id: input.userId,
       iat,
       exp: iat + input.expiresInSeconds,
     },
@@ -44,7 +50,7 @@ export function verifyAccessToken(input: {
   token: string;
   keys: ReadonlyMap<string, KeyObject>;
   now?: number;
-}): Actor {
+}): Principal {
   const token = input.token;
   if (token.length === 0 || token.length > MAX_TOKEN_LENGTH) {
     throw new InvalidAccessTokenError('malformed');
@@ -93,13 +99,13 @@ export function verifyAccessToken(input: {
     throw new InvalidAccessTokenError('signature');
   }
 
-  return readActor(decodeJson(encodedPayload), input.now ?? unixNow());
+  return readPrincipal(decodeJson(encodedPayload), input.now ?? unixNow());
 }
 
 function signRs256(input: {
   privateKey: KeyObject;
   kid: string;
-  payload: { sub: Actor; iat: number; exp: number };
+  payload: { sub: Actor; user_id: string; iat: number; exp: number };
 }): string {
   const encodedHeader = encodeJson({
     alg: JWT_ALGORITHM,
@@ -115,7 +121,7 @@ function signRs256(input: {
   return `${signingInput}.${signature.toString('base64url')}`;
 }
 
-function readActor(value: unknown, now: number): Actor {
+function readPrincipal(value: unknown, now: number): Principal {
   if (typeof value !== 'object' || value === null) {
     throw new InvalidAccessTokenError('claims');
   }
@@ -125,6 +131,9 @@ function readActor(value: unknown, now: number): Actor {
   const expiresAt = claims.exp;
   if (!isActor(claims.sub)) {
     throw new InvalidAccessTokenError('sub');
+  }
+  if (!isUserId(claims.user_id)) {
+    throw new InvalidAccessTokenError('user_id');
   }
   if (
     !isUnixTime(issuedAt) ||
@@ -137,7 +146,16 @@ function readActor(value: unknown, now: number): Actor {
     throw new InvalidAccessTokenError('expired');
   }
 
-  return claims.sub;
+  return { actor: claims.sub, userId: claims.user_id };
+}
+
+function isUserId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
 }
 
 function isJwtHeader(

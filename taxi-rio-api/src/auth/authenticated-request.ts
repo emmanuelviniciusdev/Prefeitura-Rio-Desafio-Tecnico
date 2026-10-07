@@ -1,6 +1,6 @@
 import type { Request } from 'express';
-import type { Actor } from './domain/actor';
+import type { Principal } from './domain/principal';
 
 export interface AuthenticatedRequest extends Request {
-  actor?: Actor;
+  principal?: Principal;
 }

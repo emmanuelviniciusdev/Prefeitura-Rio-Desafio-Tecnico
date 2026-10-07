@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { appConfig } from '../config/app.config';
 import { useExampleJwtEnv } from '../../test/jwt-env';
+import { ACTOR_USER_IDS } from './domain/actor';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
@@ -10,15 +11,27 @@ describe('AuthService', () => {
     useExampleJwtEnv();
   });
 
-  it('issues a bearer token whose subject is the requested actor', async () => {
+  it('issues a bearer token with the actor and user_id claims', async () => {
     const service = await createService();
 
     const passageiro = service.generateToken('passageiro');
     const motorista = service.generateToken('motorista');
 
     expect(passageiro).toMatchObject({ tokenType: 'Bearer', expiresIn: 3600 });
-    expect(service.verify(passageiro.accessToken)).toBe('passageiro');
-    expect(service.verify(motorista.accessToken)).toBe('motorista');
+    expect(service.verify(passageiro.accessToken)).toEqual({
+      actor: 'passageiro',
+      userId: ACTOR_USER_IDS.passageiro,
+    });
+    expect(service.verify(motorista.accessToken)).toEqual({
+      actor: 'motorista',
+      userId: ACTOR_USER_IDS.motorista,
+    });
+    expect(readClaim(passageiro.accessToken, 'user_id')).toBe(
+      ACTOR_USER_IDS.passageiro,
+    );
+    expect(readClaim(motorista.accessToken, 'user_id')).toBe(
+      ACTOR_USER_IDS.motorista,
+    );
   });
 
   it('refuses to start when the private key does not match the static JWKS', async () => {
@@ -52,4 +65,16 @@ async function createService(): Promise<AuthService> {
   }).compile();
 
   return moduleRef.get(AuthService);
+}
+
+function readClaim(token: string, claim: string): unknown {
+  const payload = token.split('.')[1];
+  if (!payload) {
+    throw new Error('Token payload is missing');
+  }
+
+  const claims = JSON.parse(
+    Buffer.from(payload, 'base64url').toString('utf8'),
+  ) as Record<string, unknown>;
+  return claims[claim];
 }

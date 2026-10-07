@@ -3,9 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { createPrivateKey, type KeyObject } from 'node:crypto';
 import { join } from 'node:path';
 import type { JwtConfig } from '../config/app.config';
-import type { Actor } from './domain/actor';
+import { userIdForActor, type Actor } from './domain/actor';
 import { signAccessToken, verifyAccessToken } from './domain/access-token';
 import type { AccessTokenResponse } from './domain/access-token-response';
+import type { Principal } from './domain/principal';
 import { findKidForPrivateKey, loadStaticJwks } from './domain/jwks';
 
 @Injectable()
@@ -30,6 +31,7 @@ export class AuthService {
         privateKey: this.privateKey,
         kid: this.kid,
         actor,
+        userId: userIdForActor(actor),
         expiresInSeconds: this.expiresInSeconds,
       }),
       tokenType: 'Bearer',
@@ -37,7 +39,7 @@ export class AuthService {
     };
   }
 
-  verify(token: string): Actor {
+  verify(token: string): Principal {
     return verifyAccessToken({ token, keys: this.keys });
   }
 }

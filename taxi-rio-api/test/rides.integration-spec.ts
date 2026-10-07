@@ -14,7 +14,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import type { Actor } from '../src/auth/domain/actor';
+import { ACTOR_USER_IDS, type Actor } from '../src/auth/domain/actor';
 import { configureApp } from '../src/configure-app';
 import { useExampleJwtEnv } from './jwt-env';
 import {
@@ -173,6 +173,12 @@ describe('Rides (integration)', () => {
     expect(readAccessToken(passageiro.body)).not.toEqual(
       readAccessToken(motorista.body),
     );
+    expect(readJwtClaim(readAccessToken(passageiro.body), 'user_id')).toBe(
+      ACTOR_USER_IDS.passageiro,
+    );
+    expect(readJwtClaim(readAccessToken(motorista.body), 'user_id')).toBe(
+      ACTOR_USER_IDS.motorista,
+    );
 
     await request(app.getHttpServer())
       .post('/corridas')
@@ -233,6 +239,22 @@ describe('Rides (integration)', () => {
       .set('Authorization', authorization('motorista'))
       .send({ statusCorrida: RideStatus.Initialized })
       .expect(200);
+
+    await request(app.getHttpServer())
+      .post('/corridas')
+      .set('Authorization', authorization('passageiro'))
+      .set('Idempotency-Key', randomUUID())
+      .send(ridePayload({ userId: ACTOR_USER_IDS.motorista }))
+      .expect(403);
+
+    const foreignRideId = await insertRide({
+      status: RideStatus.Accepted,
+      userId: randomUUID(),
+    });
+    await request(app.getHttpServer())
+      .get(`/corridas/${foreignRideId}`)
+      .set('Authorization', authorization('passageiro'))
+      .expect(403);
   });
 
   it('creates a ride and returns the existing one for the same Idempotency-Key', async () => {
@@ -516,6 +538,8 @@ describe('Rides (integration)', () => {
     expect(document).toContain(
       'Perfil do token sem permissão para esta operação.',
     );
+    expect(document).toContain('user_id=e1c6c6d8-08d2-46ce-a670-4be04e1be1cb');
+    expect(document).toContain('user_id=2bd66a43-5cdf-4e6a-8ad0-fbfa6b6bc6b0');
     expect(document).toContain('Redis');
 
     expect(
@@ -539,15 +563,17 @@ describe('Rides (integration)', () => {
   async function insertRide(values: {
     status: string;
     startedAt?: string | null;
-  }): Promise<void> {
+    userId?: string;
+  }): Promise<string> {
+    const id = randomUUID();
     await dataSource.query(
       `INSERT INTO corridas (
         id, user_id, local_partida, local_destino, idempotency_key, dh_inicio, dh_fim,
         status_corrida, created_at, created_by, updated_at, updated_by
       ) VALUES (?, ?, 'A', 'B', ?, ?, NULL, ?, UTC_TIMESTAMP(3), 'test', UTC_TIMESTAMP(3), 'test')`,
       [
-        randomUUID(),
-        randomUUID(),
+        id,
+        values.userId ?? randomUUID(),
         randomUUID(),
         values.startedAt === undefined
           ? '2026-10-07 18:00:00.000'
@@ -555,6 +581,7 @@ describe('Rides (integration)', () => {
         values.status,
       ],
     );
+    return id;
   }
 
   async function storedRide(id: string): Promise<{
@@ -596,6 +623,7 @@ describe('Rides (integration)', () => {
 });
 
 function ridePayload(overrides?: {
+  userId?: string;
   localPartida?: string;
   localDestino?: string;
   dhInicio?: string;
@@ -606,11 +634,23 @@ function ridePayload(overrides?: {
   dhInicio: string;
 } {
   return {
-    userId: randomUUID(),
+    userId: overrides?.userId ?? ACTOR_USER_IDS.passageiro,
     localPartida: overrides?.localPartida ?? 'São Conrado',
     localDestino: overrides?.localDestino ?? 'Centro',
     dhInicio: overrides?.dhInicio ?? '2026-10-07T18:00:00.000Z',
   };
+}
+
+function readJwtClaim(token: string, claim: string): unknown {
+  const payload = token.split('.')[1];
+  if (!payload) {
+    throw new Error('Token payload is missing');
+  }
+
+  const claims = JSON.parse(
+    Buffer.from(payload, 'base64url').toString('utf8'),
+  ) as Record<string, unknown>;
+  return claims[claim];
 }
 
 function readAccessToken(value: unknown): string {

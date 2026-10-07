@@ -1,15 +1,15 @@
 import { createParamDecorator, UnauthorizedException } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
-import type { Actor } from './domain/actor';
 import type { AuthenticatedRequest } from './authenticated-request';
+import type { Principal } from './domain/principal';
 
-export const CurrentActor = createParamDecorator(
-  (_data: unknown, context: ExecutionContext): Actor => {
+export const CurrentPrincipal = createParamDecorator(
+  (_data: unknown, context: ExecutionContext): Principal => {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     if (!request.principal) {
       throw new UnauthorizedException('Missing access token');
     }
 
-    return request.principal.actor;
+    return request.principal;
   },
 );

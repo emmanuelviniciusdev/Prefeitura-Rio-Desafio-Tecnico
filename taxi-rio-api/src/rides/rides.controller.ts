@@ -26,7 +26,9 @@ import {
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { CurrentActor } from '../auth/current-actor.decorator';
+import { CurrentPrincipal } from '../auth/current-principal.decorator';
 import type { Actor } from '../auth/domain/actor';
+import type { Principal } from '../auth/domain/principal';
 import { Roles } from '../auth/roles.decorator';
 import type { RideResponse } from './domain/ride-response';
 import { CreateRideDto } from './dto/create-ride.dto';
@@ -49,7 +51,7 @@ export class RidesController {
   @ApiOperation({
     summary: 'Cria uma corrida',
     description:
-      'Somente o perfil `passageiro` pode criar corridas. Cria uma corrida com status inicial `accepted`. A inserção usa a coluna `idempotency_key`: se a chave ainda não existir, a corrida é criada (201); se já existir, os dados armazenados são devolvidos (200).',
+      'Somente o perfil `passageiro` pode criar corridas, e o `userId` do corpo deve coincidir com o `user_id` do token. Cria uma corrida com status inicial `accepted`. A inserção usa a coluna `idempotency_key`: se a chave ainda não existir, a corrida é criada (201); se já existir, os dados armazenados são devolvidos (200).',
   })
   @ApiHeader({
     name: 'Idempotency-Key',
@@ -72,14 +74,14 @@ export class RidesController {
   })
   async create(
     @Headers('idempotency-key') idempotencyKey: string | string[] | undefined,
-    @CurrentActor() actor: Actor,
+    @CurrentPrincipal() principal: Principal,
     @Body() body: CreateRideDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<RideResponse> {
     const result = await this.ridesService.create(
       body,
       readSingleHeader(idempotencyKey),
-      actor,
+      principal,
     );
     response.status(result.created ? HttpStatus.CREATED : HttpStatus.OK);
     return result.ride;
@@ -119,7 +121,7 @@ export class RidesController {
   @ApiOperation({
     summary: 'Retorna uma corrida',
     description:
-      'Somente o perfil `passageiro` pode consultar as próprias corridas. A leitura é read-through no Redis: em caso de cache miss, a corrida é carregada do MySQL e armazenada no cache. A atualização de status invalida a chave.',
+      'Somente o perfil `passageiro` pode consultar as próprias corridas, identificadas pelo `user_id` do token. A leitura é read-through no Redis: em caso de cache miss, a corrida é carregada do MySQL e armazenada no cache. A atualização de status invalida a chave.',
   })
   @ApiParam({
     name: 'id',
@@ -131,9 +133,9 @@ export class RidesController {
   @ApiNotFoundResponse({ description: 'Corrida não encontrada.' })
   findById(
     @Param('id', ParseUUIDPipe) id: string,
-    @CurrentActor() actor: Actor,
+    @CurrentPrincipal() principal: Principal,
   ): Promise<RideResponse> {
-    return this.ridesService.findById(id, actor);
+    return this.ridesService.findById(id, principal);
   }
 }
 

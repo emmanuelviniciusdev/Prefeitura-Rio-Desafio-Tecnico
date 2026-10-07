@@ -10,6 +10,7 @@ import { isUUID } from 'class-validator';
 import { randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
 import type { Actor } from '../auth/domain/actor';
+import type { Principal } from '../auth/domain/principal';
 import { RideCacheService } from './cache/ride-cache.service';
 import {
   normalizeCreateRide,
@@ -46,15 +47,16 @@ export class RidesService {
   async create(
     dto: CreateRideDto,
     idempotencyKeyHeader: string | undefined,
-    actor: Actor,
+    principal: Principal,
   ): Promise<CreateRideResult> {
-    if (!canCreateRide(actor)) {
-      throw new ForbiddenException('Only a passageiro can create a ride');
-    }
-
     const idempotencyKey = requireIdempotencyKey(idempotencyKeyHeader);
     const request = normalizeCreateRide(dto);
     assertCreateRide(request);
+    if (!canCreateRide(principal, request.userId)) {
+      throw new ForbiddenException(
+        'Only a passageiro can create their own rides',
+      );
+    }
 
     const now = new Date();
     const ride = this.rides.create({
@@ -67,9 +69,9 @@ export class RidesService {
       finishedAt: null,
       status: RideStatus.Accepted,
       createdAt: now,
-      createdBy: actor,
+      createdBy: principal.actor,
       updatedAt: now,
-      updatedBy: actor,
+      updatedBy: principal.actor,
     });
 
     try {
@@ -85,6 +87,11 @@ export class RidesService {
       });
       if (!existing) {
         throw error;
+      }
+      if (!canReadRide(principal, existing.userId)) {
+        throw new ForbiddenException(
+          'Only a passageiro can access their own rides',
+        );
       }
 
       return { created: false, ride: toRideResponse(existing) };
@@ -137,8 +144,8 @@ export class RidesService {
     return result.response;
   }
 
-  async findById(id: string, actor: Actor): Promise<RideResponse> {
-    if (actor !== 'passageiro') {
+  async findById(id: string, principal: Principal): Promise<RideResponse> {
+    if (principal.actor !== 'passageiro') {
       throw new ForbiddenException(
         'Only a passageiro can read their own rides',
       );
@@ -152,7 +159,7 @@ export class RidesService {
     if (!ride) {
       throw new NotFoundException(`Ride ${id} was not found`);
     }
-    if (!canReadRide(actor, ride.createdBy)) {
+    if (!canReadRide(principal, ride.userId)) {
       throw new ForbiddenException(
         'Only a passageiro can read their own rides',
       );
