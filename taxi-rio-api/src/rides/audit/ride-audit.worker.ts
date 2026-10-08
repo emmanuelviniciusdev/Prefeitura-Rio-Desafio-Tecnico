@@ -36,6 +36,11 @@ export class RideAuditWorker implements OnModuleInit {
     }
 
     await this.audits.insert(record);
+    this.logger.log({
+      message: 'Persisted ride audit',
+      ride_id: record.id_corrida,
+      status: record.status_corrida,
+    });
   }
 
   async persistStatusChanged(payload: unknown): Promise<void> {
@@ -45,6 +50,11 @@ export class RideAuditWorker implements OnModuleInit {
     }
 
     await this.audits.updateStatus(record);
+    this.logger.log({
+      message: 'Persisted ride audit',
+      ride_id: record.id_corrida,
+      status: record.status_corrida,
+    });
   }
 
   private recordFrom(payload: unknown) {

@@ -6,12 +6,14 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { appConfig } from './config/app.config';
 import { DatabaseModule } from './database/database.module';
+import { ObservabilityModule } from './observability/observability.module';
 import { RabbitmqModule } from './rabbitmq/rabbitmq.module';
 import { RedisModule } from './redis/redis.module';
 import { RidesModule } from './rides/rides.module';
 
 @Module({
   imports: [
+    ObservabilityModule,
     ConfigModule.forRoot({
       isGlobal: true,
       load: [appConfig],

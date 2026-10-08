@@ -133,6 +133,7 @@ services:
       REDIS_PORT: "6379"
       MONGODB_URI: mongodb://admin:admin@mongodb:27017/taxi_rio?authSource=admin
       RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      OTEL_SERVICE_NAME: taxi-rio-api
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
       mysql:
@@ -168,6 +169,8 @@ services:
       JWT_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDaOT2sgMje3Lzu\nszn81hbQA/SdONwwhq8Q9qIiWfu/dLaNHVvd0vc7Q0xZ0SQe9QJBaovOenFAWYJ4\nkyHNRQgXrAF10wB30FUcwhXOlvG8jNQf+1Afo+56Rg4M9QpA4C6KYHqJe2wyV05l\nFRRrXwGkZK9I4ZAYzcVMIfuMI3/6J32EI2S+qxCchDI5Sdpss39HfMOfqLRPys2w\nQ5MiFMCbnuajO1DhBLlyhlQXhpmobi/O2ejH5tggxnhTXkhs2NgudHLXo90XXkgn\nLSW70GjZoawh++qSwRMqa1WUZQ/RtEEmbNpXUt15Dh2dQRYJO9td2A19ZpZ/gVi2\n37jhYa+tAgMBAAECggEASrQbs8jmerxwBPrf1/jmGFGyVHwZjJceqRz1BfNt5e2r\nbIVnZHmK3wO7yGd7CQnwurohoA50ZIX/zwz3HlEKYygj29TerSVpbY3Xb0BnApfn\nKgebNymkQsFmn/Lmjqzv4bkDWbshn94ZXSspMVR1uHQrOTTWYldWuihL935Tmit2\nXYuMWk7cKSE8ALFJpq2qbKGPTXBWaBCCp3U5Ny40fA+dc2YEgTBnvIq6kZpgCnRu\nmhfrKLvfGVDgeOzMx1snomauK+1RKeltyFQOwIMG1GIpsUGsjHsFdcEd+eKDyFpt\nk2YQfAI59M6LGf0gN89Z/YKufs8tu4mqfnqx15ZCwQKBgQD+bgOh5nvdis6arH+M\nAsZZ1YEiZYGDw+osIVPtccsY19KSCYwmso2lYJQNR40oiYJA2fsH8VioDRE48Cbl\nBv7WwXnVcJV2uN51LvQGKZLMNlccf74kDRhAbwIm++UjwcHi7dY84KSP2Pt/Kj8v\ng2ePNiVaig1ZlGZfssi4iXl0cQKBgQDbkgXcId9dVa26fZCk1tDBUvIl8g1+kYbX\n2dxGh6NKYFRf+gf8sihVbnKuMJ+/AERX3GN9tJ6ZLd+D8hB4OH6g4m0XoKQEOQUJ\nXg3uyKk5AYhcXEoOP46Ik4Mn658Q2h6wLMsydtgLS1SzGLwEy9Pjk8LyprHnl5L9\nlCAgUxFc/QKBgA3eCSyl11J34lLj2//RluYGkQdC6RA5eWX2WxCyBxPPj5aOFql1\nSesdnHQs1jDDbeoC93+zU9W1AJ9N15DcFL+3w+AyRrM12EoiyQIc+fdPbugKvl5Q\nqGW6py9gw1hzkxG/TNH8nHuKpAqGTvNUAiz4EokgxSGAySOmJvKH66rBAoGAe1lY\nI2eABP4J//dkV8Y6NjDzye9mN1Fn0EEapyCx0im1nMlozUQEtqG6mTLFu1ZaDoXH\n+qmKY4FKzOQi7nbGZHlvUdOz8I9bzfxhlWBy+Ixs334VOFXqK72686VBkgUHMm+n\no2zyR74FEiv2DDe5jGLJJOoSjYkwUXZyadZgrb0CgYAn5q0sA7MUN033FCqxVYNL\n8QkW/fBO+6SG2f/3fvNJteZdsr0KkeNRYk3bkxC9F6dMaLbo6HNgLvRE47IIQOvy\ngVHjBNmBrNdag6CLD0Hby6zuHKvWeqrSx5dw5XyfZBHU5xsXPMJQygRa9rzvHNGu\nx9useJ7AOytzBf3ok3/1kw==\n-----END PRIVATE KEY-----"
       MONGODB_URI: mongodb://admin:admin@mongodb:27017/taxi_rio?authSource=admin
       RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      OTEL_SERVICE_NAME: taxi-rio-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
       mongodb:
         condition: service_healthy

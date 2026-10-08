@@ -13,6 +13,10 @@ import {
 } from 'amqplib';
 import { once } from 'node:events';
 import type { RabbitmqConfig } from '../config/app.config';
+import {
+  runWithConsumeSpan,
+  runWithPublishSpan,
+} from '../observability/trace-context';
 
 export type MessageHandler = (payload: unknown) => Promise<void>;
 
@@ -45,13 +49,20 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     const channel = this.requireChannel();
     await channel.assertQueue(queue, { durable: true });
     const content = Buffer.from(JSON.stringify(payload));
-    const sent = channel.sendToQueue(queue, content, {
-      persistent: true,
-      contentType: 'application/json',
+    await runWithPublishSpan(queue, async (headers) => {
+      const sent = channel.sendToQueue(queue, content, {
+        persistent: true,
+        contentType: 'application/json',
+        headers,
+      });
+      if (!sent) {
+        await once(channel, 'drain');
+      }
+      this.logger.log({
+        message: 'Published message',
+        queue,
+      });
     });
-    if (!sent) {
-      await once(channel, 'drain');
-    }
   }
 
   async consume(queue: string, handler: MessageHandler): Promise<void> {
@@ -76,24 +87,43 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const queue = message.fields.routingKey || 'unknown';
+    const headers = readMessageHeaders(message);
     let payload: unknown;
     try {
       payload = JSON.parse(message.content.toString('utf8')) as unknown;
     } catch (error) {
-      this.logger.warn(
-        `Dropped invalid JSON from ${message.fields.routingKey}: ${errorMessage(error)}`,
-      );
+      await runWithConsumeSpan(queue, headers, () => {
+        this.logger.warn({
+          message: 'Dropped invalid JSON message',
+          queue,
+          error: errorMessage(error),
+        });
+        return Promise.resolve();
+      });
       channel.nack(message, false, false);
       return;
     }
 
     try {
-      await handler(payload);
+      await runWithConsumeSpan(queue, headers, async () => {
+        try {
+          this.logger.log({
+            message: 'Processing message',
+            queue,
+          });
+          await handler(payload);
+        } catch (error) {
+          this.logger.warn({
+            message: 'Failed to process message',
+            queue,
+            error: errorMessage(error),
+          });
+          throw error;
+        }
+      });
       channel.ack(message);
-    } catch (error) {
-      this.logger.warn(
-        `Failed to process ${message.fields.routingKey}: ${errorMessage(error)}`,
-      );
+    } catch {
       channel.nack(message, false, true);
     }
   }
@@ -122,6 +152,17 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
       );
     }
   }
+}
+
+function readMessageHeaders(
+  message: ConsumeMessage,
+): Record<string, unknown> | undefined {
+  const headers: unknown = message.properties.headers;
+  if (typeof headers !== 'object' || headers === null) {
+    return undefined;
+  }
+
+  return headers as Record<string, unknown>;
 }
 
 function errorMessage(error: unknown): string {
