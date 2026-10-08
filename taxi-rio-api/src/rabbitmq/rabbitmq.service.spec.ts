@@ -2,6 +2,7 @@ import { context, trace } from '@opentelemetry/api';
 import { ConfigService } from '@nestjs/config';
 import type { ConsumeMessage } from 'amqplib';
 import { installOtelForTests } from '../../test/otel';
+import { metricsRegistry } from '../observability/metrics';
 import { installStructuredLogger } from '../observability/structured-logger';
 import { RabbitmqService } from './rabbitmq.service';
 
@@ -53,6 +54,7 @@ describe('RabbitmqService trace propagation', () => {
     expect(sent[0].headers?.traceparent?.split('-')[1]).toBe(
       span.spanContext().traceId,
     );
+    expect(Date.parse(sent[0].headers?.published_at ?? '')).not.toBeNaN();
     expect(logs()).toContain(span.spanContext().traceId);
     expect(logs()).not.toContain('token-secret');
     expect(logs()).not.toContain('secret-pass');
@@ -73,7 +75,29 @@ describe('RabbitmqService trace propagation', () => {
     expect(logs()).not.toContain('token-secret');
   });
 
+  it('records queue delay from the publication datetime', async () => {
+    metricsRegistry.resetMetrics();
+    const service = connectedService(sent, ack, nack, (onMessage) => {
+      deliver = onMessage;
+    });
+    const publishedAt = new Date(Date.now() - 2_000).toISOString();
+    await service.consume('corrida.criada', () => Promise.resolve());
+    deliver?.({
+      content: Buffer.from(JSON.stringify({ id_corrida: 'ride-1' })),
+      fields: { routingKey: 'corrida.criada' },
+      properties: { headers: { published_at: publishedAt } },
+    } as unknown as ConsumeMessage);
+    await waitFor(() => ack.mock.calls.length === 1);
+
+    const delay = await histogramSum('queue_delay_seconds');
+    expect(delay).toBeGreaterThanOrEqual(2);
+    expect(delay).toBeLessThan(5);
+    expect(await counterTotal('worker_messages_total')).toBe(1);
+    expect(await counterTotal('worker_message_errors_total')).toBe(0);
+  });
+
   it('redacts secrets from failed processing logs and keeps the trace id', async () => {
+    metricsRegistry.resetMetrics();
     const logs = captureOutput();
     const service = connectedService(sent, ack, nack, (onMessage) => {
       deliver = onMessage;
@@ -100,6 +124,29 @@ describe('RabbitmqService trace propagation', () => {
     expect(logs()).toContain('user-secret');
     expect(logs()).toContain('[REDACTED]');
     expect(ack).not.toHaveBeenCalled();
+    expect(await counterTotal('worker_message_errors_total')).toBe(1);
+    expect(await counterTotal('worker_messages_total')).toBe(1);
+  });
+
+  it('reads how many messages are waiting in the queue', async () => {
+    const service = connectedService(sent, ack, nack, () => undefined);
+    const channel = (
+      service as unknown as {
+        channel: { assertQueue: jest.Mock };
+      }
+    ).channel;
+    channel.assertQueue.mockResolvedValue({
+      queue: 'corrida.criada',
+      messageCount: 6,
+      consumerCount: 1,
+    });
+
+    await expect(service.queueDepths(['corrida.criada'])).resolves.toEqual([
+      { queue: 'corrida.criada', messages: 6 },
+    ]);
+    expect(channel.assertQueue).toHaveBeenCalledWith('corrida.criada', {
+      durable: true,
+    });
   });
 });
 
@@ -152,6 +199,21 @@ function captureOutput(): () => string {
   jest.spyOn(process.stdout, 'write').mockImplementation(write);
   jest.spyOn(process.stderr, 'write').mockImplementation(write);
   return () => chunks.join('');
+}
+
+async function counterTotal(name: string): Promise<number> {
+  const metrics = await metricsRegistry.getMetricsAsJSON();
+  const metric = metrics.find((item) => item.name === name);
+  return metric?.values.reduce((total, value) => total + value.value, 0) ?? 0;
+}
+
+async function histogramSum(name: string): Promise<number> {
+  const metrics = await metricsRegistry.getMetricsAsJSON();
+  const metric = metrics.find((item) => item.name === name);
+  const sum = metric?.values.find(
+    (value) => 'metricName' in value && value.metricName === `${name}_sum`,
+  );
+  return sum?.value ?? 0;
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

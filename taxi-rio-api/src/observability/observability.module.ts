@@ -1,4 +1,8 @@
 import { Injectable, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { RabbitmqModule } from '../rabbitmq/rabbitmq.module';
+import { MetricsController } from './metrics.controller';
+import { MetricsServerShutdown } from './metrics.server';
+import { QueueMetricsBinder } from './queue-metrics.binder';
 import { shutdownTelemetry } from './telemetry';
 
 @Injectable()
@@ -9,6 +13,8 @@ class TelemetryShutdown implements OnApplicationShutdown {
 }
 
 @Module({
-  providers: [TelemetryShutdown],
+  imports: [RabbitmqModule],
+  controllers: [MetricsController],
+  providers: [TelemetryShutdown, QueueMetricsBinder, MetricsServerShutdown],
 })
 export class ObservabilityModule {}

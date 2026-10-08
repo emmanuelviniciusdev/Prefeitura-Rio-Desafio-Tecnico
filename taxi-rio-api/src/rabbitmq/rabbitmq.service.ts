@@ -14,9 +14,20 @@ import {
 import { once } from 'node:events';
 import type { RabbitmqConfig } from '../config/app.config';
 import {
+  PUBLISHED_AT_HEADER,
+  readPublishedAt,
+  recordQueueDelay,
+  recordWorkerProcessing,
+} from '../observability/metrics';
+import {
   runWithConsumeSpan,
   runWithPublishSpan,
 } from '../observability/trace-context';
+
+export interface QueueDepth {
+  queue: string;
+  messages: number;
+}
 
 export type MessageHandler = (payload: unknown) => Promise<void>;
 
@@ -53,7 +64,10 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
       const sent = channel.sendToQueue(queue, content, {
         persistent: true,
         contentType: 'application/json',
-        headers,
+        headers: {
+          ...headers,
+          [PUBLISHED_AT_HEADER]: new Date().toISOString(),
+        },
       });
       if (!sent) {
         await once(channel, 'drain');
@@ -63,6 +77,21 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         queue,
       });
     });
+  }
+
+  async queueDepths(queues: readonly string[]): Promise<QueueDepth[]> {
+    const channel = this.channel;
+    if (!channel) {
+      throw new Error('RabbitMQ channel is not connected');
+    }
+
+    const depths: QueueDepth[] = [];
+    for (const queue of queues) {
+      const reply = await channel.assertQueue(queue, { durable: true });
+      depths.push({ queue, messages: reply.messageCount });
+    }
+
+    return depths;
   }
 
   async consume(queue: string, handler: MessageHandler): Promise<void> {
@@ -89,6 +118,9 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
     const queue = message.fields.routingKey || 'unknown';
     const headers = readMessageHeaders(message);
+    const started = process.hrtime.bigint();
+    recordQueueDelay(queue, readPublishedAt(headers));
+
     let payload: unknown;
     try {
       payload = JSON.parse(message.content.toString('utf8')) as unknown;
@@ -102,6 +134,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         return Promise.resolve();
       });
       channel.nack(message, false, false);
+      recordWorkerProcessing(queue, 'error', started);
       return;
     }
 
@@ -123,8 +156,10 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         }
       });
       channel.ack(message);
+      recordWorkerProcessing(queue, 'ok', started);
     } catch {
       channel.nack(message, false, true);
+      recordWorkerProcessing(queue, 'error', started);
     }
   }
 

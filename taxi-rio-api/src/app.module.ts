@@ -13,12 +13,12 @@ import { RidesModule } from './rides/rides.module';
 
 @Module({
   imports: [
-    ObservabilityModule,
     ConfigModule.forRoot({
       isGlobal: true,
       load: [appConfig],
       envFilePath: join(__dirname, '../.env'),
     }),
+    ObservabilityModule,
     AuthModule,
     DatabaseModule,
     RedisModule,

@@ -8,7 +8,7 @@ scrape_configs:
       - targets:
           - localhost:9090
 
-  # Stays down until the API exposes a /metrics endpoint.
+  # The API exposition includes worker metrics pulled from the worker process.
   - job_name: taxi-rio-api
     metrics_path: /metrics
     static_configs:

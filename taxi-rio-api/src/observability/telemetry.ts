@@ -2,6 +2,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { NoopSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { isIgnoredHttpPath } from './http-paths';
 
 const REDACTED_QUERY_PARAMS = [
   'sig',
@@ -78,14 +79,4 @@ export function tracesEndpoint(endpoint: string): string {
   }
 
   return `${trimmed}/v1/traces`;
-}
-
-function isIgnoredHttpPath(url: string | undefined): boolean {
-  const path = url?.split('?')[0] ?? '';
-  return (
-    path === '/' ||
-    path === '/docs' ||
-    path === '/docs-json' ||
-    path.startsWith('/docs/')
-  );
 }

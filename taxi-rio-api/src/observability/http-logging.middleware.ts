@@ -1,14 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { activeTraceFields } from './trace-context';
+import { isIgnoredHttpPath } from './http-paths';
 import { currentServiceName, writeStructuredLog } from './structured-logger';
+import { activeTraceFields } from './trace-context';
 
 export function httpLoggingMiddleware(
   request: IncomingMessage,
   response: ServerResponse,
   next: () => void,
 ): void {
-  const path = request.url?.split('?')[0] ?? '';
-  if (isIgnoredPath(path)) {
+  if (isIgnoredHttpPath(request.url)) {
     next();
     return;
   }
@@ -26,20 +26,11 @@ export function httpLoggingMiddleware(
       spanId: trace.span_id,
       fields: {
         http_method: request.method,
-        http_route: path,
+        http_route: request.url?.split('?')[0] ?? '',
         http_status: response.statusCode,
         duration_ms: Math.round(durationMs),
       },
     });
   });
   next();
-}
-
-function isIgnoredPath(path: string): boolean {
-  return (
-    path === '/' ||
-    path === '/docs' ||
-    path === '/docs-json' ||
-    path.startsWith('/docs/')
-  );
 }

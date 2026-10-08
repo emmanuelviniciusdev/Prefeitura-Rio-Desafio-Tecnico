@@ -37,16 +37,18 @@ describe('httpLoggingMiddleware', () => {
     expect(serialized).not.toContain('authorization');
   });
 
-  it('skips health and documentation routes', () => {
+  it('skips health, metrics, and documentation routes', () => {
     const lines = captureStdout();
-    const response = fakeResponse(200);
 
-    httpLoggingMiddleware(
-      { method: 'GET', url: '/' } as IncomingMessage,
-      response as unknown as ServerResponse,
-      () => undefined,
-    );
-    response.finish();
+    for (const url of ['/', '/metrics', '/docs', '/docs/swagger']) {
+      const response = fakeResponse(200);
+      httpLoggingMiddleware(
+        { method: 'GET', url } as IncomingMessage,
+        response as unknown as ServerResponse,
+        () => undefined,
+      );
+      response.finish();
+    }
 
     expect(lines()).toEqual([]);
   });

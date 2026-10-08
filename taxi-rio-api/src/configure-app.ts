@@ -1,12 +1,14 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { httpLoggingMiddleware } from './observability/http-logging.middleware';
+import { httpMetricsMiddleware } from './observability/http-metrics.middleware';
 
 export const SWAGGER_PATH = 'docs';
 
 export function configureApp(app: INestApplication): void {
   app.enableShutdownHooks();
   app.use(httpLoggingMiddleware);
+  app.use(httpMetricsMiddleware);
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

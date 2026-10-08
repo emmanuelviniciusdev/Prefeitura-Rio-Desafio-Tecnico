@@ -135,6 +135,7 @@ services:
       RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
       OTEL_SERVICE_NAME: taxi-rio-api
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      WORKER_METRICS_URL: http://taxi-rio-worker:9464/metrics
     depends_on:
       mysql:
         condition: service_healthy
@@ -171,6 +172,7 @@ services:
       RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
       OTEL_SERVICE_NAME: taxi-rio-worker
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      METRICS_PORT: "9464"
     depends_on:
       mongodb:
         condition: service_healthy

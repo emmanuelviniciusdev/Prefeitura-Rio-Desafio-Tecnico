@@ -7,12 +7,12 @@ import { RideAuditModule } from './rides/audit/ride-audit.module';
 
 @Module({
   imports: [
-    ObservabilityModule,
     ConfigModule.forRoot({
       isGlobal: true,
       load: [appConfig],
       envFilePath: join(__dirname, '../.env'),
     }),
+    ObservabilityModule,
     RideAuditModule,
   ],
 })
