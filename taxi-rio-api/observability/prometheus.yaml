@@ -2,6 +2,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Rules only. Alertmanager is intentionally not configured.
+rule_files:
+  - /etc/prometheus/alerts.yaml
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
