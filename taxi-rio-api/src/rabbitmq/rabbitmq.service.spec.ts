@@ -50,6 +50,7 @@ describe('RabbitmqService trace propagation', () => {
     span.end();
 
     expect(sent).toHaveLength(1);
+    expect(channelOf(service).assertQueue).not.toHaveBeenCalled();
     expect(JSON.parse(sent[0].content.toString('utf8'))).toEqual(payload);
     expect(sent[0].headers?.traceparent?.split('-')[1]).toBe(
       span.spanContext().traceId,
@@ -128,13 +129,26 @@ describe('RabbitmqService trace propagation', () => {
     expect(await counterTotal('worker_messages_total')).toBe(1);
   });
 
+  it('declares the given queues once', async () => {
+    const service = connectedService(sent, ack, nack, () => undefined);
+    const channel = channelOf(service);
+
+    await service.assertQueues(['corrida.criada', 'corrida.status_alterado']);
+
+    expect(channel.assertQueue).toHaveBeenCalledTimes(2);
+    expect(channel.assertQueue).toHaveBeenNthCalledWith(1, 'corrida.criada', {
+      durable: true,
+    });
+    expect(channel.assertQueue).toHaveBeenNthCalledWith(
+      2,
+      'corrida.status_alterado',
+      { durable: true },
+    );
+  });
+
   it('reads how many messages are waiting in the queue', async () => {
     const service = connectedService(sent, ack, nack, () => undefined);
-    const channel = (
-      service as unknown as {
-        channel: { assertQueue: jest.Mock };
-      }
-    ).channel;
+    const channel = channelOf(service);
     channel.assertQueue.mockResolvedValue({
       queue: 'corrida.criada',
       messageCount: 6,
@@ -149,6 +163,14 @@ describe('RabbitmqService trace propagation', () => {
     });
   });
 });
+
+function channelOf(service: RabbitmqService): { assertQueue: jest.Mock } {
+  return (
+    service as unknown as {
+      channel: { assertQueue: jest.Mock };
+    }
+  ).channel;
+}
 
 function connectedService(
   sent: Array<{ content: Buffer; headers?: Record<string, string> }>,

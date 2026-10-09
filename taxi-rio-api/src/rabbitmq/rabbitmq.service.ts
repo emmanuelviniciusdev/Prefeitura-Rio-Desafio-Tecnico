@@ -59,7 +59,6 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
   async publish(queue: string, payload: unknown): Promise<void> {
     const channel = this.requireChannel();
-    await this.assertQueue(channel, queue);
     const content = Buffer.from(JSON.stringify(payload));
     await runWithPublishSpan(queue, async (headers) => {
       const sent = channel.sendToQueue(queue, content, {
@@ -78,6 +77,13 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         queue,
       });
     });
+  }
+
+  async assertQueues(queues: readonly string[]): Promise<void> {
+    const channel = this.requireChannel();
+    for (const queue of queues) {
+      await this.assertQueue(channel, queue);
+    }
   }
 
   async queueDepths(queues: readonly string[]): Promise<QueueDepth[]> {
