@@ -20,6 +20,7 @@ import {
   recordWorkerProcessing,
 } from '../observability/metrics';
 import {
+  runWithAssertQueueSpan,
   runWithConsumeSpan,
   runWithPublishSpan,
 } from '../observability/trace-context';
@@ -58,7 +59,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
   async publish(queue: string, payload: unknown): Promise<void> {
     const channel = this.requireChannel();
-    await channel.assertQueue(queue, { durable: true });
+    await this.assertQueue(channel, queue);
     const content = Buffer.from(JSON.stringify(payload));
     await runWithPublishSpan(queue, async (headers) => {
       const sent = channel.sendToQueue(queue, content, {
@@ -87,7 +88,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
     const depths: QueueDepth[] = [];
     for (const queue of queues) {
-      const reply = await channel.assertQueue(queue, { durable: true });
+      const reply = await this.assertQueue(channel, queue);
       depths.push({ queue, messages: reply.messageCount });
     }
 
@@ -96,7 +97,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
   async consume(queue: string, handler: MessageHandler): Promise<void> {
     const channel = this.requireChannel();
-    await channel.assertQueue(queue, { durable: true });
+    await this.assertQueue(channel, queue);
     await channel.consume(queue, (message) => {
       void this.handleDelivery(channel, message, handler);
     });
@@ -161,6 +162,12 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
       channel.nack(message, false, true);
       recordWorkerProcessing(queue, 'error', started);
     }
+  }
+
+  private assertQueue(channel: Channel, queue: string) {
+    return runWithAssertQueueSpan(queue, () =>
+      channel.assertQueue(queue, { durable: true }),
+    );
   }
 
   private requireChannel(): Channel {

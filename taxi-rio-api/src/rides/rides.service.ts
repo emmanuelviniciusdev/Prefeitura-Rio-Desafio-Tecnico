@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource, Repository } from 'typeorm';
 import type { Actor } from '../auth/domain/actor';
 import type { Principal } from '../auth/domain/principal';
+import { runWithDbSpan } from '../observability/trace-context';
 import { RideCacheService } from './cache/ride-cache.service';
 import {
   normalizeCreateRide,
@@ -83,7 +84,7 @@ export class RidesService {
     });
 
     try {
-      await this.rides.insert(ride);
+      await runWithDbSpan('insert', () => this.rides.insert(ride));
       const created = toRideResponse(ride);
       await this.events.publishCreated(created);
       return { created: true, ride: created };
@@ -117,35 +118,37 @@ export class RidesService {
       throw new ForbiddenException('Only a motorista can update ride status');
     }
 
-    const result = await this.dataSource.transaction(async (manager) => {
-      const rides = manager.getRepository(Ride);
-      const ride = await rides.findOne({
-        where: { id },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!ride) {
-        throw new NotFoundException(`Ride ${id} was not found`);
-      }
+    const result = await runWithDbSpan('update', () =>
+      this.dataSource.transaction(async (manager) => {
+        const rides = manager.getRepository(Ride);
+        const ride = await rides.findOne({
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!ride) {
+          throw new NotFoundException(`Ride ${id} was not found`);
+        }
 
-      if (isIdempotentRequest(ride.status, dto.statusCorrida)) {
-        return { response: toRideResponse(ride), changed: false };
-      }
+        if (isIdempotentRequest(ride.status, dto.statusCorrida)) {
+          return { response: toRideResponse(ride), changed: false };
+        }
 
-      if (!canTransition(ride.status, dto.statusCorrida)) {
-        throw new ConflictException(
-          `Cannot change ride status from ${ride.status} to ${dto.statusCorrida}`,
-        );
-      }
+        if (!canTransition(ride.status, dto.statusCorrida)) {
+          throw new ConflictException(
+            `Cannot change ride status from ${ride.status} to ${dto.statusCorrida}`,
+          );
+        }
 
-      ride.status = dto.statusCorrida;
-      if (dto.statusCorrida === RideStatus.Finished) {
-        ride.finishedAt = new Date();
-      }
-      ride.updatedAt = new Date();
-      ride.updatedBy = actor;
-      const saved = await rides.save(ride);
-      return { response: toRideResponse(saved), changed: true };
-    });
+        ride.status = dto.statusCorrida;
+        if (dto.statusCorrida === RideStatus.Finished) {
+          ride.finishedAt = new Date();
+        }
+        ride.updatedAt = new Date();
+        ride.updatedBy = actor;
+        const saved = await rides.save(ride);
+        return { response: toRideResponse(saved), changed: true };
+      }),
+    );
 
     if (result.changed) {
       await this.cache.invalidate(id);

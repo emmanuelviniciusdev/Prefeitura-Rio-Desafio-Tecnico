@@ -6,12 +6,15 @@ import {
   SpanStatusCode,
   trace,
   type Attributes,
+  type Context,
   type Exception,
   type Span,
 } from '@opentelemetry/api';
 import { redactString } from './redact';
 
 const tracer = trace.getTracer('taxi-rio');
+
+export type DbOperation = 'insert' | 'update';
 
 export interface TraceFields {
   trace_id?: string;
@@ -34,25 +37,18 @@ export async function runWithPublishSpan<T>(
   queue: string,
   fn: (headers: Record<string, string>) => Promise<T>,
 ): Promise<T> {
-  const span = tracer.startSpan(`publish ${queue}`, {
-    kind: SpanKind.PRODUCER,
-    attributes: messagingAttributes(queue, 'publish'),
-  });
-
-  return context.with(trace.setSpan(context.active(), span), async () => {
-    try {
+  return runWithSpan(
+    `publish ${queue}`,
+    {
+      kind: SpanKind.PRODUCER,
+      attributes: messagingAttributes(queue, 'publish'),
+    },
+    async () => {
       const headers: Record<string, string> = {};
       propagation.inject(context.active(), headers);
-      const result = await fn(headers);
-      span.setStatus({ code: SpanStatusCode.OK });
-      return result;
-    } catch (error) {
-      recordFailure(span, error);
-      throw error;
-    } finally {
-      span.end();
-    }
-  });
+      return fn(headers);
+    },
+  );
 }
 
 export async function runWithConsumeSpan<T>(
@@ -64,16 +60,69 @@ export async function runWithConsumeSpan<T>(
     ROOT_CONTEXT,
     carrierFromHeaders(headers),
   );
-  const span = tracer.startSpan(
+  return runWithSpan(
     `process ${queue}`,
     {
       kind: SpanKind.CONSUMER,
       attributes: messagingAttributes(queue, 'process'),
+      parent: extracted,
     },
-    extracted,
+    fn,
+  );
+}
+
+export async function runWithAssertQueueSpan<T>(
+  queue: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return runWithSpan(
+    `assertQueue ${queue}`,
+    {
+      kind: SpanKind.CLIENT,
+      attributes: messagingAttributes(queue, 'assert'),
+    },
+    fn,
+  );
+}
+
+export async function runWithDbSpan<T>(
+  operation: DbOperation,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return runWithSpan(
+    `${operation} corridas`,
+    {
+      kind: SpanKind.CLIENT,
+      attributes: {
+        'db.system': 'mysql',
+        'db.operation.name': operation,
+        'db.collection.name': 'corridas',
+      },
+    },
+    fn,
+  );
+}
+
+async function runWithSpan<T>(
+  name: string,
+  options: {
+    kind: SpanKind;
+    attributes?: Attributes;
+    parent?: Context;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const parent = options.parent ?? context.active();
+  const span = tracer.startSpan(
+    name,
+    {
+      kind: options.kind,
+      attributes: options.attributes,
+    },
+    parent,
   );
 
-  return context.with(trace.setSpan(extracted, span), async () => {
+  return context.with(trace.setSpan(parent, span), async () => {
     try {
       const result = await fn();
       span.setStatus({ code: SpanStatusCode.OK });
@@ -89,7 +138,7 @@ export async function runWithConsumeSpan<T>(
 
 function messagingAttributes(
   queue: string,
-  operation: 'publish' | 'process',
+  operation: 'publish' | 'process' | 'assert',
 ): Attributes {
   return {
     'messaging.system': 'rabbitmq',
