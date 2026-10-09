@@ -240,7 +240,7 @@ describe('RidesService', () => {
     expect(response.updatedBy).toBe('motorista');
     expect(response.dhFim).toBeNull();
     expect(cache.invalidate).toHaveBeenCalledWith(rideId);
-    expect(events.publishStatusChanged).not.toHaveBeenCalled();
+    expect(events.publishStatusChanged).toHaveBeenCalledWith(response);
   });
 
   it('forbids a passageiro from updating ride status', async () => {

@@ -21,10 +21,10 @@ describe('ride audit event', () => {
     });
   });
 
-  it('publishes status changes only for requested and finished', () => {
+  it('publishes status changes for every ride status', () => {
     expect(shouldPublishRideStatusChanged(RideStatus.Requested)).toBe(true);
+    expect(shouldPublishRideStatusChanged(RideStatus.Initialized)).toBe(true);
     expect(shouldPublishRideStatusChanged(RideStatus.Finished)).toBe(true);
-    expect(shouldPublishRideStatusChanged(RideStatus.Initialized)).toBe(false);
   });
 
   it('parses a valid payload and rejects incomplete ones', () => {
