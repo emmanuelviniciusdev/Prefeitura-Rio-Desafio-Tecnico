@@ -2,8 +2,13 @@
 // The goal is the inflection point (p95/p99 rising while p50 stays put),
 // the first saturated resource, and the evidence — not a pass/fail gate.
 //
-// Run from the repo root, with the stack already up:
+// Run from the repo root. The runner talks to Compose by default, or to
+// k3d when STRESS_TARGET=k3d. Prefer the Makefile, which checks that the
+// chosen stack is already running and then runs this script:
+//   make stress-with-dockercompose
+//   make stress-with-k3d
 //   ./loadtest/run-stress.sh
+//   STRESS_TARGET=k3d ./loadtest/run-stress.sh
 //
 // STEPS (default "10,25,50,75,100,150,200") and STEP_DURATION (default 1m)
 // override the ramp. TOKEN_PASSAGEIRO and TOKEN_MOTORISTA must be set. The

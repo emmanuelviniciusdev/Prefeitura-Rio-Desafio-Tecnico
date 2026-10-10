@@ -1,4 +1,4 @@
-.PHONY: help run-with-dockercompose run-with-k3d stop-k3d stop-dockercompose
+.PHONY: help start-infra-dockercompose start-infra-k3d stop-infra-k3d stop-infra-dockercompose stress-with-dockercompose stress-with-k3d watch-taxi-rio-worker-k3d
 
 .DEFAULT_GOAL := help
 
@@ -15,12 +15,15 @@ K8S_WAIT_TIMEOUT ?= 300s
 
 help:
 	@echo "Comandos disponiveis:"
-	@echo "  make run-with-dockercompose   Sobe a stack com Docker Compose"
-	@echo "  make run-with-k3d             Sobe a stack em um cluster k3d local"
-	@echo "  make stop-dockercompose       Encerra a stack do Docker Compose"
-	@echo "  make stop-k3d                 Remove o cluster k3d local"
+	@echo "  make start-infra-dockercompose      Sobe a stack com Docker Compose"
+	@echo "  make start-infra-k3d                Sobe a stack em um cluster k3d local"
+	@echo "  make stop-infra-dockercompose    Encerra a stack do Docker Compose"
+	@echo "  make stop-infra-k3d              Remove o cluster k3d local"
+	@echo "  make stress-with-dockercompose   Roda o stress contra o Docker Compose (precisa estar no ar)"
+	@echo "  make stress-with-k3d             Roda o stress contra o k3d (precisa estar no ar)"
+	@echo "  make watch-taxi-rio-worker-k3d   Acompanha as replicas do taxi-rio-worker no k3d"
 
-stop-k3d:
+stop-infra-k3d:
 	@if ! command -v k3d >/dev/null 2>&1; then \
 		exit 0; \
 	fi; \
@@ -29,11 +32,11 @@ stop-k3d:
 		k3d cluster delete $(K3D_CLUSTER); \
 	fi
 
-stop-dockercompose:
+stop-infra-dockercompose:
 	@echo "Encerrando a stack do Docker Compose..."
 	@$(COMPOSE) down
 
-run-with-dockercompose: stop-k3d
+start-infra-dockercompose: stop-infra-k3d
 	$(COMPOSE) up --build --force-recreate -d --wait
 	@echo
 	@echo "Stack pronta (Docker Compose):"
@@ -43,7 +46,7 @@ run-with-dockercompose: stop-k3d
 	@echo "  Jaeger:      http://localhost:16686"
 	@echo "  RabbitMQ UI: http://localhost:15672"
 
-run-with-k3d: stop-dockercompose
+start-infra-k3d: stop-infra-dockercompose
 	@set -e; \
 	command -v k3d >/dev/null 2>&1 || { echo "Comando obrigatorio ausente: k3d" >&2; exit 1; }; \
 	command -v kubectl >/dev/null 2>&1 || { echo "Comando obrigatorio ausente: kubectl" >&2; exit 1; }; \
@@ -87,3 +90,32 @@ run-with-k3d: stop-dockercompose
 	echo "  API:        http://api.taxi-rio.localhost:8080"; \
 	echo "  Prometheus: http://prometheus.taxi-rio.localhost:8080"; \
 	echo "  Jaeger:     http://jaeger.taxi-rio.localhost:8080"
+
+stress-with-dockercompose:
+	@if ! $(COMPOSE) ps --status running --services 2>/dev/null | grep -qx taxi-rio-api; then \
+		echo "Docker Compose nao esta rodando. Suba a stack com: make start-infra-dockercompose" >&2; \
+		exit 1; \
+	fi
+	STRESS_TARGET=compose ./loadtest/run-stress.sh
+
+stress-with-k3d:
+	@if ! command -v k3d >/dev/null 2>&1; then \
+		echo "k3d nao encontrado. Suba a stack com: make start-infra-k3d" >&2; \
+		exit 1; \
+	fi; \
+	if ! k3d cluster list --no-headers 2>/dev/null | awk '{print $$1}' | grep -qx '$(K3D_CLUSTER)'; then \
+		echo "Cluster k3d '$(K3D_CLUSTER)' nao esta rodando. Suba a stack com: make start-infra-k3d" >&2; \
+		exit 1; \
+	fi
+	STRESS_TARGET=k3d K8S_NAMESPACE=$(K8S_NAMESPACE) ./loadtest/run-stress.sh
+
+watch-taxi-rio-worker-k3d:
+	@if ! command -v k3d >/dev/null 2>&1; then \
+		echo "k3d nao encontrado. Suba a stack com: make start-infra-k3d" >&2; \
+		exit 1; \
+	fi; \
+	if ! k3d cluster list --no-headers 2>/dev/null | awk '{print $$1}' | grep -qx '$(K3D_CLUSTER)'; then \
+		echo "Cluster k3d '$(K3D_CLUSTER)' nao esta rodando. Suba a stack com: make start-infra-k3d" >&2; \
+		exit 1; \
+	fi
+	kubectl -n $(K8S_NAMESPACE) get deploy taxi-rio-worker --watch

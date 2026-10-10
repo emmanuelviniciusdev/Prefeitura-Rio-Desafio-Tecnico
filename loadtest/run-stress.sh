@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-# Runs the stress k6 ramp inside the compose network. Limits on the k6
+# Runs the stress k6 ramp against Compose or k3d. Limits on the k6
 # container are part of the experiment: if dropped_iterations rises or the
 # achieved rate falls, the generator may be the bottleneck.
+#
+#   STRESS_TARGET=compose ./loadtest/run-stress.sh
+#   STRESS_TARGET=k3d ./loadtest/run-stress.sh
+#
+# Prefer the Makefile targets, which check that the chosen stack is already
+# running and then invoke this script:
+#   make stress-with-dockercompose
+#   make stress-with-k3d
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
-HOST_BASE_URL="${HOST_BASE_URL:-http://localhost:3000}"
-PROMETHEUS_HOST_URL="${PROMETHEUS_HOST_URL:-http://localhost:9090}"
-RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://localhost:15672}"
-RABBITMQ_USER="${RABBITMQ_USER:-admin}"
-RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-admin}"
+STRESS_TARGET="${STRESS_TARGET:-compose}"
+K8S_NAMESPACE="${K8S_NAMESPACE:-taxi-rio}"
+K6_IMAGE="${K6_IMAGE:-grafana/k6:1.3.0}"
 RESULTS_DIR="${ROOT}/loadtest/results"
 STATS_FILE="${RESULTS_DIR}/docker-stats.jsonl"
 LIMITS_FILE="${RESULTS_DIR}/docker-limits.jsonl"
@@ -32,6 +38,40 @@ export K6_SCRIPT="loadtest/stress.js"
 export SUMMARY_PATH="loadtest/results/stress-summary.json"
 export K6_UID="$(id -u)"
 export K6_GID="$(id -g)"
+
+RABBITMQ_USER="${RABBITMQ_USER:-admin}"
+RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-admin}"
+
+prometheus_pf_pid=""
+rabbitmq_pf_pid=""
+sampler_pid=""
+
+case "${STRESS_TARGET}" in
+  compose|docker-compose)
+    STRESS_TARGET="compose"
+    HOST_BASE_URL="${HOST_BASE_URL:-http://localhost:3000}"
+    PROMETHEUS_HOST_URL="${PROMETHEUS_HOST_URL:-http://localhost:9090}"
+    RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://localhost:15672}"
+    K6_BASE_URL="${K6_BASE_URL:-http://taxi-rio-api:3000}"
+    K6_PROMETHEUS_URL="${K6_PROMETHEUS_URL:-http://prometheus:9090}"
+    HOST_SAMPLE_RUNTIME="compose"
+    STACK_HINT="make start-infra-dockercompose"
+    ;;
+  k3d)
+    HOST_BASE_URL="${HOST_BASE_URL:-http://api.taxi-rio.localhost:8080}"
+    PROMETHEUS_HOST_URL="${PROMETHEUS_HOST_URL:-http://localhost:9090}"
+    RABBITMQ_MANAGEMENT_URL="${RABBITMQ_MANAGEMENT_URL:-http://localhost:15672}"
+    K6_BASE_URL="${K6_BASE_URL:-http://api.taxi-rio.localhost:8080}"
+    K6_PROMETHEUS_URL="${K6_PROMETHEUS_URL:-http://prometheus.taxi-rio.localhost:8080}"
+    HOST_SAMPLE_RUNTIME="k3d"
+    STACK_HINT="make start-infra-k3d"
+    ;;
+  *)
+    echo "STRESS_TARGET must be compose or k3d. Received: ${STRESS_TARGET}" >&2
+    exit 1
+    ;;
+esac
+
 export PROMETHEUS_HOST_URL
 
 mkdir -p "${RESULTS_DIR}"
@@ -42,9 +82,74 @@ mkdir -p "${RESULTS_DIR}"
 : > "${RABBITMQ_FILE}"
 : > "${MYSQL_FILE}"
 
-if ! curl -sf "${HOST_BASE_URL}/" >/dev/null; then
-  echo "API is not healthy at ${HOST_BASE_URL}/. Start the stack with: docker compose up -d" >&2
+curl_host() {
+  local url="$1"
+  shift
+  if [[ "${url}" == *api.taxi-rio.localhost:8080* ]]; then
+    curl -sf --resolve api.taxi-rio.localhost:8080:127.0.0.1 "$@" "${url}"
+  else
+    curl -sf "$@" "${url}"
+  fi
+}
+
+wait_http() {
+  local url="$1"
+  local attempts="$2"
+  local i
+  for i in $(seq 1 "${attempts}"); do
+    if curl_host "${url}" >/dev/null; then
+      return 0
+    fi
+    if [[ "${i}" -lt "${attempts}" ]]; then
+      sleep 2
+    fi
+  done
+  return 1
+}
+
+cleanup_sampler() {
+  if [[ -n "${sampler_pid}" ]]; then
+    kill "${sampler_pid}" >/dev/null 2>&1 || true
+    wait "${sampler_pid}" >/dev/null 2>&1 || true
+    sampler_pid=""
+  fi
+}
+
+cleanup() {
+  cleanup_sampler
+  if [[ -n "${prometheus_pf_pid}" ]]; then
+    kill "${prometheus_pf_pid}" >/dev/null 2>&1 || true
+    wait "${prometheus_pf_pid}" >/dev/null 2>&1 || true
+    prometheus_pf_pid=""
+  fi
+  if [[ -n "${rabbitmq_pf_pid}" ]]; then
+    kill "${rabbitmq_pf_pid}" >/dev/null 2>&1 || true
+    wait "${rabbitmq_pf_pid}" >/dev/null 2>&1 || true
+    rabbitmq_pf_pid=""
+  fi
+}
+trap cleanup EXIT
+
+api_attempts=1
+if [[ "${STRESS_TARGET}" == "k3d" ]]; then
+  api_attempts=5
+  command -v kubectl >/dev/null 2>&1 || {
+    echo "kubectl is required when STRESS_TARGET=k3d." >&2
+    exit 1
+  }
+fi
+
+if ! wait_http "${HOST_BASE_URL}/" "${api_attempts}"; then
+  echo "API is not healthy at ${HOST_BASE_URL}/. Start the stack with: ${STACK_HINT}" >&2
   exit 1
+fi
+
+if [[ "${STRESS_TARGET}" == "k3d" ]]; then
+  kubectl -n "${K8S_NAMESPACE}" port-forward svc/prometheus 9090:9090 >/dev/null 2>&1 &
+  prometheus_pf_pid=$!
+  kubectl -n "${K8S_NAMESPACE}" port-forward svc/rabbitmq 15672:15672 >/dev/null 2>&1 &
+  rabbitmq_pf_pid=$!
+  wait_http "${PROMETHEUS_HOST_URL}/-/healthy" 15 || true
 fi
 
 if ! curl -sf "${PROMETHEUS_HOST_URL}/-/healthy" >/dev/null; then
@@ -54,7 +159,7 @@ fi
 fetch_token() {
   local actor="$1"
   local body
-  body="$(curl -sf -X POST "${HOST_BASE_URL}/auth/generate-token/${actor}")" || {
+  body="$(curl_host "${HOST_BASE_URL}/auth/generate-token/${actor}" -X POST)" || {
     echo "Failed to generate a ${actor} token at ${HOST_BASE_URL}." >&2
     exit 1
   }
@@ -83,6 +188,8 @@ fi
 
 sample_once() {
   node "${ROOT}/loadtest/lib/host-sample.mjs" \
+    --runtime "${HOST_SAMPLE_RUNTIME}" \
+    --namespace "${K8S_NAMESPACE}" \
     --stats "${STATS_FILE}" \
     --limits "${LIMITS_FILE}" \
     --inspect "${INSPECT_FILE}" \
@@ -103,35 +210,56 @@ sample_once() {
 ) &
 sampler_pid=$!
 
-cleanup() {
-  if [[ -n "${sampler_pid:-}" ]]; then
-    kill "${sampler_pid}" >/dev/null 2>&1 || true
-    wait "${sampler_pid}" >/dev/null 2>&1 || true
-    sampler_pid=""
+run_k6() {
+  if [[ "${STRESS_TARGET}" == "k3d" ]]; then
+    docker rm -f k6 >/dev/null 2>&1 || true
+    docker run --rm --name k6 \
+      --user "${K6_UID}:${K6_GID}" \
+      --cpus "${K6_CPUS}" \
+      --memory "${K6_MEMORY}" \
+      --memory-swap "${K6_MEMORY}" \
+      -v "${ROOT}:/work" \
+      -w /work \
+      --add-host=api.taxi-rio.localhost:host-gateway \
+      --add-host=prometheus.taxi-rio.localhost:host-gateway \
+      -e TOKEN_PASSAGEIRO \
+      -e TOKEN_MOTORISTA \
+      -e STEPS \
+      -e STEP_DURATION \
+      -e WARMUP_RATE \
+      -e PRE_ALLOCATED_VUS \
+      -e MAX_VUS \
+      -e K6_CPUS \
+      -e K6_MEMORY \
+      -e BASE_URL="${K6_BASE_URL}" \
+      -e PROMETHEUS_URL="${K6_PROMETHEUS_URL}" \
+      -e SUMMARY_PATH=loadtest/results/stress-summary.json \
+      "${K6_IMAGE}" run "${K6_SCRIPT}"
+    return
   fi
+
+  docker compose --profile loadtest run --rm --no-deps \
+    -e TOKEN_PASSAGEIRO \
+    -e TOKEN_MOTORISTA \
+    -e STEPS \
+    -e STEP_DURATION \
+    -e WARMUP_RATE \
+    -e PRE_ALLOCATED_VUS \
+    -e MAX_VUS \
+    -e K6_CPUS \
+    -e K6_MEMORY \
+    -e BASE_URL="${K6_BASE_URL}" \
+    -e PROMETHEUS_URL="${K6_PROMETHEUS_URL}" \
+    -e SUMMARY_PATH=loadtest/results/stress-summary.json \
+    k6
 }
-trap cleanup EXIT
 
 set +e
-docker compose --profile loadtest run --rm --no-deps \
-  -e TOKEN_PASSAGEIRO \
-  -e TOKEN_MOTORISTA \
-  -e STEPS \
-  -e STEP_DURATION \
-  -e WARMUP_RATE \
-  -e PRE_ALLOCATED_VUS \
-  -e MAX_VUS \
-  -e K6_CPUS \
-  -e K6_MEMORY \
-  -e BASE_URL=http://taxi-rio-api:3000 \
-  -e PROMETHEUS_URL=http://prometheus:9090 \
-  -e SUMMARY_PATH=loadtest/results/stress-summary.json \
-  k6
+run_k6
 k6_status=$?
 set -e
 
-cleanup
-trap - EXIT
+cleanup_sampler
 
 merge_args=(
   "${SUMMARY_FILE}"
