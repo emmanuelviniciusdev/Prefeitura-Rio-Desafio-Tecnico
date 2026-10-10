@@ -1,0 +1,8 @@
+# Operator install. Kept out of k8s/dev because that overlay forces
+# namespace taxi-rio, and KEDA must stay in namespace keda.
+# `make run-with-k3d` applies this with server-side apply before k8s/dev.
+# Client-side apply rejects the CRD size.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/kedacore/keda/releases/download/v2.21.0/keda-2.21.0-core.yaml

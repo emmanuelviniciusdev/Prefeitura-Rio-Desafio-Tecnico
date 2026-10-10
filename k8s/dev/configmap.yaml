@@ -17,9 +17,10 @@ data:
   REDIS_HOST: redis
   REDIS_PORT: "6379"
   MONGODB_DATABASE: taxi_rio
-  # Prefetch proven in the 2026-10-10 stress run: queue lag stayed under 70ms
-  # through 200 it/s. Each worker queue can hold this many unacked messages.
-  RABBITMQ_PREFETCH: "10"
+  # One unacked message per consumer. The 2026-10-10 stress run showed
+  # corrida.status_alterado passing 10k messages at this prefetch, which is
+  # the backlog the KEDA RabbitMQ scaler is meant to absorb by adding workers.
+  RABBITMQ_PREFETCH: "1"
   JWT_EXPIRES_IN_SECONDS: "3600"
   RIDE_CACHE_TTL_SECONDS: "300"
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318

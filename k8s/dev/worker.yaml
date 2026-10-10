@@ -25,7 +25,8 @@ metadata:
     app.kubernetes.io/component: worker
     environment: dev
 spec:
-  replicas: 1
+  # KEDA owns this count. Omitting replicas keeps a later apply from
+  # resetting the HorizontalPodAutoscaler back to 1.
   selector:
     matchLabels:
       app.kubernetes.io/name: taxi-rio-worker

@@ -11,6 +11,7 @@ resources:
   - rabbitmq.yaml
   - api.yaml
   - worker.yaml
+  - keda.yaml
   - app.yaml
   - prometheus.yaml
   - jaeger.yaml

@@ -6,7 +6,9 @@ COMPOSE ?= docker compose
 K3D_CLUSTER ?= taxi-rio
 K3D_CONFIG ?= k8s/dev/k3d.yaml
 K8S_OVERLAY ?= k8s/dev
+K8S_KEDA_OVERLAY ?= k8s/keda
 K8S_NAMESPACE ?= taxi-rio
+KEDA_NAMESPACE ?= keda
 API_IMAGE ?= taxi-rio-api:dev
 APP_IMAGE ?= taxi-rio-app:dev
 K8S_WAIT_TIMEOUT ?= 300s
@@ -57,6 +59,16 @@ run-with-k3d: stop-dockercompose
 	docker build -t $(API_IMAGE) ./taxi-rio-api; \
 	docker build -t $(APP_IMAGE) ./taxi-rio-app; \
 	k3d image import $(API_IMAGE) $(APP_IMAGE) --cluster $(K3D_CLUSTER); \
+	echo "Instalando o KEDA..."; \
+	kubectl apply --server-side --force-conflicts -k $(K8S_KEDA_OVERLAY); \
+	kubectl wait --for=condition=Established \
+		crd/scaledobjects.keda.sh \
+		crd/triggerauthentications.keda.sh \
+		--timeout=$(K8S_WAIT_TIMEOUT); \
+	keda_resources=$$(kubectl -n $(KEDA_NAMESPACE) get deploy -o name); \
+	for resource in $$keda_resources; do \
+		kubectl -n $(KEDA_NAMESPACE) rollout status "$$resource" --timeout=$(K8S_WAIT_TIMEOUT); \
+	done; \
 	kubectl apply -k $(K8S_OVERLAY); \
 	if [ "$$cluster_existed" -eq 1 ]; then \
 		echo "Recriando workloads do cluster k3d '$(K3D_CLUSTER)'..."; \

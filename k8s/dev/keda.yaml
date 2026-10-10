@@ -1,0 +1,61 @@
+# KEDA reads the broker from its own namespace, so the host is the
+# cluster DNS name. The app keeps the short name in RABBITMQ_URL.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: rabbitmq
+  labels:
+    app.kubernetes.io/name: rabbitmq
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: autoscaling
+    environment: dev
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: taxi-rio-credentials
+      key: RABBITMQ_HOST
+---
+# One worker per 1000 ready messages, capped at 10. With prefetch 1 the
+# 2026-10-10 stress run pushed corrida.status_alterado past 10k messages;
+# 10k / 1000 lands on the cap instead of one pod per message.
+# HPA takes the larger of the two queues. Both empty (activationValue 0)
+# scales the Deployment to zero after cooldownPeriod.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: taxi-rio-worker
+  labels:
+    app.kubernetes.io/name: taxi-rio-worker
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: autoscaling
+    environment: dev
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: taxi-rio-worker
+  pollingInterval: 5
+  cooldownPeriod: 60
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  triggers:
+    - type: rabbitmq
+      authenticationRef:
+        name: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: corrida.criada
+        mode: QueueLength
+        value: "1000"
+        activationValue: "0"
+        vhostName: "/"
+    - type: rabbitmq
+      authenticationRef:
+        name: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: corrida.status_alterado
+        mode: QueueLength
+        value: "1000"
+        activationValue: "0"
+        vhostName: "/"
