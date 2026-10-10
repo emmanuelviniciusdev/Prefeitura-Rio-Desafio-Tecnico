@@ -1,10 +1,14 @@
 import { context, trace } from '@opentelemetry/api';
 import { ConfigService } from '@nestjs/config';
-import type { ConsumeMessage } from 'amqplib';
+import { connect, type ConsumeMessage } from 'amqplib';
 import { installOtelForTests } from '../../test/otel';
 import { metricsRegistry } from '../observability/metrics';
 import { installStructuredLogger } from '../observability/structured-logger';
 import { RabbitmqService } from './rabbitmq.service';
+
+jest.mock('amqplib', () => ({
+  connect: jest.fn(),
+}));
 
 describe('RabbitmqService trace propagation', () => {
   const sent: Array<{
@@ -129,6 +133,28 @@ describe('RabbitmqService trace propagation', () => {
     expect(await counterTotal('worker_messages_total')).toBe(1);
   });
 
+  it('applies per-consumer prefetch on the channel', async () => {
+    const prefetch = jest.fn().mockResolvedValue(undefined);
+    jest.mocked(connect).mockResolvedValue({
+      createChannel: jest.fn().mockResolvedValue({
+        prefetch,
+        on: jest.fn(),
+      }),
+      on: jest.fn(),
+    } as never);
+
+    const service = new RabbitmqService({
+      getOrThrow: () => ({
+        url: 'amqp://admin:secret-pass@localhost:5672',
+        prefetch: 10,
+      }),
+    } as unknown as ConfigService);
+
+    await service.onModuleInit();
+
+    expect(prefetch).toHaveBeenCalledWith(10, false);
+  });
+
   it('declares the given queues once', async () => {
     const service = connectedService(sent, ack, nack, () => undefined);
     const channel = channelOf(service);
@@ -181,6 +207,7 @@ function connectedService(
   const service = new RabbitmqService({
     getOrThrow: () => ({
       url: 'amqp://admin:secret-pass@localhost:5672',
+      prefetch: 10,
     }),
   } as unknown as ConfigService);
   Object.assign(service, {

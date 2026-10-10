@@ -36,11 +36,14 @@ export type MessageHandler = (payload: unknown) => Promise<void>;
 export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RabbitmqService.name);
   private readonly url: string;
+  private readonly prefetch: number;
   private connection: ChannelModel | undefined;
   private channel: Channel | undefined;
 
   constructor(config: ConfigService) {
-    this.url = config.getOrThrow<RabbitmqConfig>('app.rabbitmq').url;
+    const rabbitmq = config.getOrThrow<RabbitmqConfig>('app.rabbitmq');
+    this.url = rabbitmq.url;
+    this.prefetch = rabbitmq.prefetch;
   }
 
   async onModuleInit(): Promise<void> {
@@ -52,7 +55,9 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     channel.on('error', (error: Error) => {
       this.logger.warn(`RabbitMQ channel error: ${error.message}`);
     });
-    await channel.prefetch(1);
+    // Per-consumer QoS (RabbitMQ default). Two consumers on this channel
+    // can each hold `prefetch` unacked messages, so up to 2x in parallel.
+    await channel.prefetch(this.prefetch, false);
     this.connection = connection;
     this.channel = channel;
   }

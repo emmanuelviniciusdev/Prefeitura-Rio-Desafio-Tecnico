@@ -97,6 +97,30 @@ describe('RideAuditWorker', () => {
     expect(audits.insert).not.toHaveBeenCalled();
   });
 
+  it('accepts the same create message twice', async () => {
+    await worker.persistCreated(event());
+    await expect(worker.persistCreated(event())).resolves.toBeUndefined();
+    expect(audits.insert).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts the same status message twice', async () => {
+    await worker.persistStatusChanged(event());
+    await expect(worker.persistStatusChanged(event())).resolves.toBeUndefined();
+    expect(audits.updateStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a status change when the audit record does not exist yet', async () => {
+    audits.updateStatus.mockRejectedValue(
+      new Error(
+        'Ride audit 11111111-1111-4111-8111-111111111111 was not found',
+      ),
+    );
+
+    await expect(worker.persistStatusChanged(event())).rejects.toThrow(
+      'Ride audit 11111111-1111-4111-8111-111111111111 was not found',
+    );
+  });
+
   it('ignores invalid payloads', async () => {
     await worker.persistCreated({ id_corrida: 'missing-fields' });
     await worker.persistStatusChanged({ id_corrida: 'missing-fields' });

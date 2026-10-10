@@ -20,6 +20,7 @@ export interface MongodbConfig {
 
 export interface RabbitmqConfig {
   url: string;
+  prefetch: number;
 }
 
 export interface JwtConfig {
@@ -80,6 +81,7 @@ export const appConfig = registerAs('app', (): AppConfig => ({
   },
   rabbitmq: {
     url: process.env.RABBITMQ_URL ?? 'amqp://admin:admin@localhost:5672',
+    prefetch: readPositiveInteger(process.env.RABBITMQ_PREFETCH, 10),
   },
   jwt: {
     privateKey: normalizePrivateKeyPem(process.env.JWT_PRIVATE_KEY),

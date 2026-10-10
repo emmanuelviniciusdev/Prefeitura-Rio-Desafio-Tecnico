@@ -15,7 +15,13 @@ export class RideAuditRepository implements OnModuleInit {
   }
 
   async insert(record: RideAuditRecord): Promise<void> {
-    await this.collection().insertOne(record);
+    try {
+      await this.collection().insertOne(record);
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
+    }
   }
 
   async updateStatus(record: RideAuditRecord): Promise<void> {
@@ -31,6 +37,15 @@ export class RideAuditRepository implements OnModuleInit {
   private collection() {
     return this.mongo.collection<RideAuditRecord>(RIDE_AUDIT_COLLECTION);
   }
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 11000
+  );
 }
 
 function statusUpdate(record: RideAuditRecord): Partial<RideAuditRecord> {
