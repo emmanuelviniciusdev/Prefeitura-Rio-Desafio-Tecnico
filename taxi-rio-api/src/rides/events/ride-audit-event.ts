@@ -22,8 +22,8 @@ export interface RideAuditRecord {
   computed_elapsed_time: number | null;
 }
 
-export function shouldPublishRideStatusChanged(_status: RideStatus): boolean {
-  return true;
+export function shouldPublishRideStatusChanged(status: RideStatus): boolean {
+  return rideStatuses.has(status);
 }
 
 export function toRideAuditEvent(ride: RideResponse): RideAuditEvent {
