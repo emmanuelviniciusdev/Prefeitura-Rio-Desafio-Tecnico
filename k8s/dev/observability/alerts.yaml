@@ -1,0 +1,82 @@
+# Alertas da taxi-rio-api avaliados pelo Prometheus.
+#
+# Não há Alertmanager: estas regras só mudam o estado do alerta
+# (inactive, pending, firing) na UI do próprio Prometheus.
+
+groups:
+  - name: taxi-rio-api
+    rules:
+      # Sinal direto de que a API está falhando. O contador
+      # http_request_errors_total só incrementa com status >= 500.
+      # 401 e 403 ficam de fora: esses códigos são tratados como
+      # comportamento esperado, e alertar sobre eles geraria ruído.
+      # Eles continuam no denominador (http_requests_total), porque são
+      # tráfego válido e não erro de servidor.
+      #
+      # A razão usa a janela de 5 minutos para um pico isolado se diluir.
+      # 5% é alto o bastante para ignorar uma falha pontual e baixo o
+      # bastante para pegar degradação contínua. O for de 5 minutos só
+      # dispara se essa razão permanecer acima do limiar.
+      - alert: TaxiRioApiHigh5xxErrorRate
+        expr: |
+          (
+            (
+              sum(rate(http_request_errors_total{service="taxi-rio-api"}[5m]))
+              or vector(0)
+            )
+            /
+            sum(rate(http_requests_total{service="taxi-rio-api"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: taxi-rio-api
+        annotations:
+          summary: Taxa de respostas 5xx da API acima do limiar
+          description: >-
+            {{ $value | humanizePercentage }} das respostas HTTP foram 5xx
+            na janela de 5 minutos, acima do limiar provisório de 5%.
+            401 e 403 não entram neste alerta.
+
+      # O histórico da corrida só avança quando o worker consome a fila.
+      # Se o worker para ou fica lento, a API continua respondendo 2xx e o
+      # alerta de 5xx não vê o problema. queue_messages é a profundidade
+      # da fila (mensagens aguardando). API e worker publicam a mesma série:
+      # max by (queue) evita contar duas vezes e abre um alerta por fila.
+      #
+      # Limiares calibrados no stress: em 10 it/s as duas filas ficam em 0;
+      # corrida.status_alterado passa de 800 já em 25 it/s. O for de 5
+      # minutos exige atraso contínuo, então um pico que escoa logo não
+      # dispara. Warning (>100) é worker atrás; critical (>1000) é atraso
+      # na ordem de dezenas de segundos de lag.
+      - alert: TaxiRioApiQueueBacklog
+        expr: |
+          max by (queue) (
+            queue_messages{queue=~"corrida\\.criada|corrida\\.status_alterado"}
+          ) > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: taxi-rio-api
+        annotations:
+          summary: Fila {{ $labels.queue }} acumulando mensagens
+          description: >-
+            A fila {{ $labels.queue }} está com {{ $value }} mensagens
+            aguardando há pelo menos 5 minutos, acima do limiar de warning
+            (100). O worker pode estar parado ou mais lento que a publicação.
+
+      - alert: TaxiRioApiQueueBacklogCritical
+        expr: |
+          max by (queue) (
+            queue_messages{queue=~"corrida\\.criada|corrida\\.status_alterado"}
+          ) > 1000
+        for: 5m
+        labels:
+          severity: critical
+          service: taxi-rio-api
+        annotations:
+          summary: Fila {{ $labels.queue }} com atraso crítico
+          description: >-
+            A fila {{ $labels.queue }} está com {{ $value }} mensagens
+            aguardando há pelo menos 5 minutos, acima do limiar de critical
+            (1000). O histórico da corrida está substancialmente atrasado.

@@ -1,0 +1,52 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: taxi-rio
+  labels:
+    app.kubernetes.io/name: taxi-rio
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: ingress
+    environment: dev
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: taxi-rio.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: taxi-rio-app
+                port:
+                  number: 80
+    - host: api.taxi-rio.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: taxi-rio-api
+                port:
+                  number: 3000
+    - host: prometheus.taxi-rio.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
+    - host: jaeger.taxi-rio.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jaeger
+                port:
+                  number: 16686

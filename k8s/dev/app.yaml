@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: taxi-rio-app
+  labels:
+    app.kubernetes.io/name: taxi-rio-app
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: web
+    environment: dev
+spec:
+  selector:
+    app.kubernetes.io/name: taxi-rio-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taxi-rio-app
+  labels:
+    app.kubernetes.io/name: taxi-rio-app
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: web
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: taxi-rio-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: taxi-rio-app
+        app.kubernetes.io/part-of: taxi-rio
+        app.kubernetes.io/component: web
+        environment: dev
+    spec:
+      initContainers:
+        - name: wait-for-api
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              i=0
+              until wget -q -O /dev/null http://taxi-rio-api:3000/; do
+                i=$((i + 1))
+                if [ "$i" -gt 150 ]; then
+                  exit 1
+                fi
+                sleep 2
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      containers:
+        - name: taxi-rio-app
+          image: taxi-rio-app:dev
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 80
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # k6 called the API directly, so this container sat at 0% CPU and
+          # 8.3Mi RSS. Request is only enough to avoid BestEffort. Limit stays
+          # at the tested ceiling (250m / 64Mi).
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 250m
+              memory: 64Mi

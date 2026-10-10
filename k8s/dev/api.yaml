@@ -1,0 +1,171 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: taxi-rio-api
+  labels:
+    app.kubernetes.io/name: taxi-rio-api
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: api
+    environment: dev
+spec:
+  selector:
+    app.kubernetes.io/name: taxi-rio-api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taxi-rio-api
+  labels:
+    app.kubernetes.io/name: taxi-rio-api
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: api
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: taxi-rio-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: taxi-rio-api
+        app.kubernetes.io/part-of: taxi-rio
+        app.kubernetes.io/component: api
+        environment: dev
+    spec:
+      initContainers:
+        - name: wait-for-dependencies
+          image: taxi-rio-api:dev
+          imagePullPolicy: Never
+          command:
+            - node
+            - wait-for-dependencies.cjs
+          envFrom:
+            - configMapRef:
+                name: taxi-rio
+          env:
+            - name: WAIT_FOR
+              value: mysql,redis,mongodb,rabbitmq
+            - name: WAIT_TIMEOUT_SECONDS
+              value: "300"
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: MYSQL_USER
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: MYSQL_PASSWORD
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: MONGODB_URI
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: RABBITMQ_URL
+          # Outside the load-test envelope: same image, only until dependencies answer.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: wait-script
+              mountPath: /app/wait-for-dependencies.cjs
+              subPath: wait-for-dependencies.cjs
+      containers:
+        - name: taxi-rio-api
+          image: taxi-rio-api:dev
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: taxi-rio
+          env:
+            - name: NODE_OPTIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: taxi-rio
+                  key: API_NODE_OPTIONS
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: taxi-rio
+                  key: API_OTEL_SERVICE_NAME
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: MYSQL_USER
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: MYSQL_PASSWORD
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: MONGODB_URI
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: RABBITMQ_URL
+            - name: JWT_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: taxi-rio-credentials
+                  key: JWT_PRIVATE_KEY
+          # GET / is the public root used by the Compose healthcheck.
+          # startupProbe covers Nest boot and migrations; liveness restarts
+          # only after readiness has already dropped the pod from the Service.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # Stress run 2026-10-10, single replica. At 150 it/s CPU averaged 646m
+          # and peaked at 973m (the report's ~1 core limit). RSS peaked at 111Mi.
+          # Limit stays 1000m / 256Mi: that ceiling held p95 under 2s through
+          # 200 it/s with no OOM, and 256Mi fits the 192MB V8 heap cap.
+          resources:
+            requests:
+              cpu: 650m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 256Mi
+      volumes:
+        - name: wait-script
+          configMap:
+            name: taxi-rio-wait

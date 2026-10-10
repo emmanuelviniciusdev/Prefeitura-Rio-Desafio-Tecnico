@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: taxi-rio
+  labels:
+    app.kubernetes.io/part-of: taxi-rio
+    environment: dev

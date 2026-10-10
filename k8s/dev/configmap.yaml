@@ -1,0 +1,46 @@
+# Non-sensitive settings shared by the API and the worker.
+# Credentials live in Secret taxi-rio-credentials.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taxi-rio
+  labels:
+    app.kubernetes.io/name: taxi-rio
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: config
+    environment: dev
+data:
+  PORT: "3000"
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: taxi_rio
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  MONGODB_DATABASE: taxi_rio
+  # Prefetch proven in the 2026-10-10 stress run: queue lag stayed under 70ms
+  # through 200 it/s. Each worker queue can hold this many unacked messages.
+  RABBITMQ_PREFETCH: "10"
+  JWT_EXPIRES_IN_SECONDS: "3600"
+  RIDE_CACHE_TTL_SECONDS: "300"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  WORKER_METRICS_URL: http://taxi-rio-worker:9464/metrics
+  METRICS_PORT: "9464"
+  # Heap caps from the stress-test containers. They must fit under the
+  # memory limits (API 192MB heap / 256Mi limit, worker 96MB / 128Mi).
+  API_NODE_OPTIONS: "--max-old-space-size=192"
+  WORKER_NODE_OPTIONS: "--max-old-space-size=96"
+  API_OTEL_SERVICE_NAME: taxi-rio-api
+  WORKER_OTEL_SERVICE_NAME: taxi-rio-worker
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/part-of: taxi-rio
+    app.kubernetes.io/component: tracing
+    environment: dev
+data:
+  COLLECTOR_OTLP_ENABLED: "true"
+  MEMORY_MAX_TRACES: "10000"
