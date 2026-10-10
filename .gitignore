@@ -43,3 +43,7 @@ Thumbs.db
 
 # Local Compose overrides
 docker-compose.override.yml
+
+# k6 summaries and docker samples from a load-test run
+loadtest/results/**
+!loadtest/results/.gitkeep

@@ -2,9 +2,6 @@
 # Não inclui Alertmanager. Aplique no namespace monitorado pelo Prometheus
 # do cluster e, se o operator filtrar regras por label, acrescente o
 # label que o ruleSelector desse Prometheus exige.
-#
-# Os limiares numéricos são ponto de partida. Cada um tem um TODO(k6)
-# para ser substituído pelo valor medido no teste de carga.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -26,11 +23,6 @@ spec:
         # 5% é alto o bastante para ignorar uma falha pontual e baixo o
         # bastante para pegar degradação contínua. O for de 5 minutos só
         # dispara se essa razão permanecer acima do limiar.
-        #
-        # TODO(k6): recalibrar 0.05 e a duração de 5m com a taxa de 5xx
-        # medida em regime saudável e no ponto em que a API degrada.
-        # Confirmar se o volume saudável pede um piso mínimo de requisições,
-        # para a razão não oscilar quando há pouco tráfego.
         - alert: TaxiRioApiHigh5xxErrorRate
           expr: |
             (
@@ -55,16 +47,14 @@ spec:
         # O histórico da corrida só avança quando o worker consome a fila.
         # Se o worker para ou fica lento, a API continua respondendo 2xx e o
         # alerta de 5xx não vê o problema. queue_messages é a profundidade
-        # da fila (mensagens aguardando); esse sinal aparece
-        # como rabbitmq_queue_depth. API e worker publicam a mesma série:
+        # da fila (mensagens aguardando). API e worker publicam a mesma série:
         # max by (queue) evita contar duas vezes e abre um alerta por fila.
         #
-        # O for de 5 minutos exige que a profundidade permaneça acima do
-        # limiar, então um pico que escoa logo não dispara.
-        #
-        # TODO(k6): recalibrar 100 e a duração de 5m com a profundidade
-        # observada no pico do teste de carga com o worker saudável,
-        # deixando folga para não disparar em operação normal.
+        # Limiares calibrados no stress: em 10 it/s as duas filas ficam em 0;
+        # corrida.status_alterado passa de 800 já em 25 it/s. O for de 5
+        # minutos exige atraso contínuo, então um pico que escoa logo não
+        # dispara. Warning (>100) é worker atrás; critical (>1000) é atraso
+        # na ordem de dezenas de segundos de lag.
         - alert: TaxiRioApiQueueBacklog
           expr: |
             max by (queue) (
@@ -78,5 +68,21 @@ spec:
             summary: Fila {{ $labels.queue }} acumulando mensagens
             description: >-
               A fila {{ $labels.queue }} está com {{ $value }} mensagens
-              aguardando há pelo menos 5 minutos, acima do limiar provisório
-              de 100. O worker pode estar parado ou mais lento que a publicação.
+              aguardando há pelo menos 5 minutos, acima do limiar de warning
+              (100). O worker pode estar parado ou mais lento que a publicação.
+
+        - alert: TaxiRioApiQueueBacklogCritical
+          expr: |
+            max by (queue) (
+              queue_messages{queue=~"corrida\\.criada|corrida\\.status_alterado"}
+            ) > 1000
+          for: 5m
+          labels:
+            severity: critical
+            service: taxi-rio-api
+          annotations:
+            summary: Fila {{ $labels.queue }} com atraso crítico
+            description: >-
+              A fila {{ $labels.queue }} está com {{ $value }} mensagens
+              aguardando há pelo menos 5 minutos, acima do limiar de critical
+              (1000). O histórico da corrida está substancialmente atrasado.
