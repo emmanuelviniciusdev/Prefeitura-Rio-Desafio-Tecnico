@@ -1,19 +1,14 @@
-## 1. Broker de mensagens: manter o RabbitMQ ou optar por outro?
+## 1. Se você fosse desenvolver esse sistema do zero, sem tecnologias definidas, manteria o RabbitMQ ou optaria por outro broker? Justifique sua resposta.
 
-**Contexto.** Hoje o fluxo tem dois eventos e um consumidor, e o RabbitMQ atende bem. Partindo do zero, para um app de corridas em escala, eventos neste tipo de contexto tendem a ter vários consumidores e uma alta volumetria.
+Se eu fosse desenvolver esse sistema do zero, pensando na evolução de um aplicativo de corridas (como o Taxi Rio), **optaria pelo Apache Kafka** em vez do RabbitMQ.
 
-**Decisão.** Kafka, por três motivos principais:
+Embora o RabbitMQ atenda perfeitamente ao escopo restrito do desafio atual (dois eventos e um consumidor), a arquitetura do Kafka é mais aderente às necessidades reais de um sistema de mobilidade em escala:
 
-- **Retenção e replay:** o evento fica no log por um período configurável, e um novo consumidor (exemplo: auditoria) lê o histórico sem o produtor republicar nada.
-- **Vários consumidores e alta vazão:** consumer groups independentes leem o mesmo tópico, o que serve para possíveis eventos frequentes, como a localização dos motoristas e passageiros.
-- **Ecossistema:** Kafka Connect, Streams e Schema Registry cobrem integrações (data lake, métricas em tempo real, contratos de evento) que de outra forma seriam código próprio.
+1. **Retenção de Eventos (Log Base):** O RabbitMQ remove a mensagem logo após o consumo. O Kafka, por ser baseado em log, mantém o histórico. Em um app de corridas, isso permite plugar um novo serviço (como auditoria ou *Data Lake*) que processe todas as corridas do passado sem exigir que a API republique os dados.
+2. **Escalabilidade com Múltiplos Consumidores:** Eventos como `corrida.criada` interessam a vários domínios simultaneamente (*matching*, faturamento, notificações). No RabbitMQ, o padrão *fan-out* resolve isso, mas duplica fisicamente a mensagem em uma fila para cada serviço, multiplicando o consumo de recursos do broker. No Kafka, a mensagem é gravada uma única vez, e os *Consumer Groups* permitem que dezenas de serviços a leiam de forma independente, mantendo altíssima vazão sem sobrecarregar a infraestrutura.
+3. **Ecossistema Voltado para Dados:** O Kafka possui ferramentas nativas (como Kafka Streams e Connect) que facilitam integrações vitais para mobilidade, como agregar métricas de corridas em tempo real para calcular preço dinâmico, reduzindo a necessidade de desenvolver código customizado para essas operações.
 
-**Alternativas.** RabbitMQ (fila de tarefas com roteamento flexível, retry, TTL e DLQ nativos, operação simples) e Kafka (log distribuído, particionado e retido em disco).
-
-**Trade-offs.**
-
-- Ecossistema mais pesado de manter (cluster, partições, schemas).
-- Retry com atraso, TTL por mensagem e DLQ não são nativos e exigem tópicos de retry construídos à mão.
+**Conclusão:** O *trade-off* do Kafka é exigir uma operação mais complexa. Se a premissa fosse apenas a criação de um MVP, ou manter o sistema pequeno, o RabbitMQ bastaria. Porém, como desenvolver "do zero" geralmente visa preparar a arquitetura para o crescimento do produto, o Kafka é a escolha mais robusta e eficiente para as demandas de roteamento e volume desse domínio.
 
 ## 2. Topologia do RabbitMQ
 
@@ -21,11 +16,11 @@
 
 **Decisão.** Exchange padrão com uma fila durável por evento, sem DLQ.
 
-**Alternativas.** Topic Exchange com filas ligadas por routing key (permite fan-out, como uma fila de auditoria) e DLX + DLQ para mensagens problemáticas.
+**Alternativas.** Topic Exchange com filas ligadas por routing key (o que permite fan-out) e DLX + DLQ para direcionar mensagens problemáticas.
 
 **Trade-offs.** 
 
-- A API fica acoplada ao nome das filas, e a implementação de uma futura arquitetura fan-out exigiria mudar o publisher. Sem DLQ, há a possibilidade de mensagens problemáticas caírem em loop infinito (poison messages).
+- A API fica acoplada aos nomes das filas, e a implementação de uma futura arquitetura fan-out exigiria alterações no publisher da API. Sem DLQ, há a possibilidade de mensagens problemáticas caírem em loop infinito (poison messages).
 
 **Evolução.** Migrar para Topic Exchange (a mesma mensagem alimentando, por exemplo, uma fila de negócio e uma de auditoria) e adicionar DLX + DLQ com limite de tentativas.
 
