@@ -1,3 +1,5 @@
+# DECISÕES
+
 ## 1. Se você fosse desenvolver esse sistema do zero, sem tecnologias definidas, manteria o RabbitMQ ou optaria por outro broker? Justifique sua resposta.
 
 Se eu fosse desenvolver esse sistema do zero, pensando na evolução de um aplicativo de corridas (como o Taxi Rio), **optaria pelo Apache Kafka** em vez do RabbitMQ.
